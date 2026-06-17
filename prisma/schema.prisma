@@ -1,0 +1,196 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  EMPLOYEE
+}
+
+enum LicenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ProjectStatus {
+  ACTIVE
+  COMPLETED
+  PAUSED
+}
+
+enum WorkLogMode {
+  ONSITE
+  REMOTE
+  LICENSE
+}
+
+enum WorkLogStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  cuil               String    @unique
+  email              String?   @unique
+  passwordHash       String
+  role               Role      @default(EMPLOYEE)
+  mustChangePassword Boolean   @default(true)
+  employeeId         String?   @unique
+  legacyId           String?   @unique
+  employee           Employee? @relation(fields: [employeeId], references: [id])
+  auditLogs          AuditLog[]
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  deletedAt          DateTime?
+
+  @@index([role])
+}
+
+model Employee {
+  id                 String           @id @default(cuid())
+  legacyId           String?          @unique
+  name               String
+  email              String?          @unique
+  avatar             String?
+  dependency         String
+  position           String?
+  cuil               String           @unique
+  totalLicenseDays   Int              @default(0)
+  strikeDutyOrder    Int              @default(-1)
+  user               User?
+  remoteDays         RemoteDay[]
+  workLogs           WorkLog[]
+  licenseRequests    LicenseRequest[]
+  assignedProjects   Project[]        @relation("ProjectAssignees")
+  authoredUpdates    ProjectUpdate[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  deletedAt          DateTime?
+
+  @@index([dependency])
+  @@index([strikeDutyOrder])
+}
+
+model Project {
+  id                  String          @id @default(cuid())
+  legacyId            String?         @unique
+  name                String
+  description         String
+  requesterDependency String
+  status              ProjectStatus   @default(ACTIVE)
+  assignedEmployees   Employee[]      @relation("ProjectAssignees")
+  updates             ProjectUpdate[]
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  deletedAt           DateTime?
+
+  @@index([status])
+}
+
+model ProjectUpdate {
+  id         String    @id @default(cuid())
+  legacyId   String?   @unique
+  projectId  String
+  authorId   String?
+  authorName String
+  content    String
+  createdAt  DateTime  @default(now())
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author     Employee? @relation(fields: [authorId], references: [id])
+
+  @@index([projectId])
+}
+
+model WorkLog {
+  id          String        @id @default(cuid())
+  legacyId    String?       @unique
+  employeeId  String
+  title       String
+  description String
+  date        DateTime
+  mode        WorkLogMode
+  status      WorkLogStatus @default(SUBMITTED)
+  employee    Employee      @relation(fields: [employeeId], references: [id])
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+
+  @@index([employeeId, date])
+}
+
+model LicenseRequest {
+  id              String        @id @default(cuid())
+  legacyId        String?       @unique
+  employeeId      String
+  article         String
+  startDate       DateTime
+  endDate         DateTime
+  reason          String
+  certificateName String?
+  status          LicenseStatus @default(PENDING)
+  dateRequested   DateTime      @default(now())
+  employee        Employee      @relation(fields: [employeeId], references: [id])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+
+  @@index([employeeId, status])
+}
+
+model LicenseRule {
+  id             String   @id @default(cuid())
+  legacyId       String?  @unique
+  article        String   @unique
+  name           String
+  description    String
+  maxDaysPerYear Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model StrikeConfig {
+  id                  String   @id @default("default")
+  nextDate            DateTime?
+  nextCoverEmployeeId String?
+  lastDate            DateTime?
+  lastCoverEmployeeId String?
+  notes               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model RemoteDay {
+  id         String   @id @default(cuid())
+  legacyId   String?  @unique
+  employeeId String
+  day        String
+  date       DateTime?
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([employeeId, day])
+  @@index([employeeId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  user      User?    @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity, entityId])
+}
