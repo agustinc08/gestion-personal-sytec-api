@@ -258,4 +258,29 @@ export class ProjectsService {
       };
     });
   }
+
+  async comments(id: string, user: JwtUser) {
+    await this.findOne(id, user);
+    const rows = await this.prisma.projectComment.findMany({
+      where: { projectId: id, deletedAt: null },
+      include: { author: { include: { employee: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.map((row) => ({ id: row.id, projectId: row.projectId, authorUserId: row.authorUserId, authorName: row.author.employee?.name || (row.author.role === Role.ADMIN ? 'Administración' : row.author.cuil), message: row.message, createdAt: row.createdAt, updatedAt: row.updatedAt, canDelete: user.role === Role.ADMIN || row.authorUserId === user.id }));
+  }
+
+  async addComment(id: string, message: string, user: JwtUser) {
+    await this.findOne(id, user);
+    await this.prisma.projectComment.create({ data: { projectId: id, authorUserId: user.id, message: message.trim() } });
+    return this.comments(id, user);
+  }
+
+  async deleteComment(id: string, commentId: string, user: JwtUser) {
+    await this.findOne(id, user);
+    const comment = await this.prisma.projectComment.findFirst({ where: { id: commentId, projectId: id, deletedAt: null } });
+    if (!comment) throw new NotFoundException('Comentario no encontrado');
+    if (user.role !== Role.ADMIN && comment.authorUserId !== user.id) throw new ForbiddenException();
+    await this.prisma.projectComment.update({ where: { id: commentId }, data: { deletedAt: new Date() } });
+    return { status: 'success' };
+  }
 }

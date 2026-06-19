@@ -89,58 +89,61 @@ enum WorkLogStatus {
 }
 
 model User {
-  id                 String    @id @default(cuid())
-  cuil               String    @unique
-  email              String?   @unique
+  id                 String           @id @default(cuid())
+  cuil               String           @unique
+  email              String?          @unique
   passwordHash       String
-  role               Role      @default(EMPLOYEE)
-  mustChangePassword Boolean   @default(true)
-  employeeId         String?   @unique
-  legacyId           String?   @unique
-  employee           Employee? @relation(fields: [employeeId], references: [id])
+  role               Role             @default(EMPLOYEE)
+  mustChangePassword Boolean          @default(true)
+  employeeId         String?          @unique
+  legacyId           String?          @unique
+  employee           Employee?        @relation(fields: [employeeId], references: [id])
   auditLogs          AuditLog[]
   deployments        Deployment[]
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  notifications      Notification[]
+  projectComments    ProjectComment[]
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
   deletedAt          DateTime?
 
   @@index([role])
 }
 
 model Employee {
-  id                 String           @id @default(cuid())
-  legacyId           String?          @unique
-  name               String
-  email              String?          @unique
-  avatar             String?
-  dependency         String
-  position           String?
-  cuil               String           @unique
-  totalLicenseDays   Int              @default(0)
-  strikeDutyOrder    Int              @default(-1)
-  user               User?
-  remoteDays         RemoteDay[]
-  workLogs           WorkLog[]
-  licenseRequests    LicenseRequest[]
-  assignedProjects   Project[]        @relation("ProjectAssignees")
-  ownedProjects       Project[]        @relation("ProjectOwner")
-  authoredUpdates    ProjectUpdate[]
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
-  deletedAt          DateTime?
+  id               String           @id @default(cuid())
+  legacyId         String?          @unique
+  name             String
+  email            String?          @unique
+  avatar           String?
+  dependency       String
+  position         String?
+  cuil             String           @unique
+  totalLicenseDays Int              @default(0)
+  strikeDutyOrder  Int              @default(-1)
+  user             User?
+  remoteDays       RemoteDay[]
+  workLogs         WorkLog[]
+  licenseRequests  LicenseRequest[]
+  assignedProjects Project[]        @relation("ProjectAssignees")
+  ownedProjects    Project[]        @relation("ProjectOwner")
+  authoredUpdates  ProjectUpdate[]
+  notifications    Notification[]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  deletedAt        DateTime?
 
   @@index([dependency])
   @@index([strikeDutyOrder])
 }
 
 model Project {
-  id                  String          @id @default(cuid())
-  legacyId            String?         @unique
+  id                  String            @id @default(cuid())
+  legacyId            String?           @unique
   name                String
   description         String
   requesterDependency String
-  status              ProjectStatus   @default(ACTIVE)
-  year                Int             @default(2026)
+  status              ProjectStatus     @default(ACTIVE)
+  year                Int               @default(2026)
   difficulty          ProjectDifficulty @default(MEDIUM)
   deadline            DateTime?
   ownerId             String?
@@ -149,15 +152,16 @@ model Project {
   branch              String?
   techStack           String?
   notes               String?
-  needsRedesign       Boolean         @default(false)
-  needsRework         Boolean         @default(false)
-  owner               Employee?       @relation("ProjectOwner", fields: [ownerId], references: [id])
-  assignedEmployees   Employee[]      @relation("ProjectAssignees")
+  needsRedesign       Boolean           @default(false)
+  needsRework         Boolean           @default(false)
+  owner               Employee?         @relation("ProjectOwner", fields: [ownerId], references: [id])
+  assignedEmployees   Employee[]        @relation("ProjectAssignees")
   updates             ProjectUpdate[]
   workLogs            WorkLog[]
   deployments         Deployment[]
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
+  comments            ProjectComment[]
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
   deletedAt           DateTime?
 
   @@index([status])
@@ -167,23 +171,60 @@ model Project {
   @@index([ownerId])
 }
 
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String?
+  employeeId String?
+  roleTarget Role?
+  type       String
+  title      String
+  message    String
+  link       String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime?
+  metadata   Json?
+  dedupeKey  String    @unique
+  user       User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([employeeId, readAt, createdAt])
+  @@index([roleTarget, readAt, createdAt])
+}
+
+model ProjectComment {
+  id           String    @id @default(cuid())
+  projectId    String
+  authorUserId String
+  message      String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author       User      @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@index([authorUserId])
+}
+
 model Deployment {
-  id             String            @id @default(cuid())
-  projectId      String
-  environment    DeployEnvironment
-  status         DeployStatus      @default(PENDING)
-  apiCommit      String?
-  webCommit      String?
-  apiRepoUrl     String?
-  webRepoUrl     String?
-  server         String?
-  deployedById   String?
-  notes          String?
-  deployedAt     DateTime          @default(now())
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  deployedBy     User?             @relation(fields: [deployedById], references: [id])
+  id           String            @id @default(cuid())
+  projectId    String
+  environment  DeployEnvironment
+  status       DeployStatus      @default(PENDING)
+  apiCommit    String?
+  webCommit    String?
+  apiRepoUrl   String?
+  webRepoUrl   String?
+  server       String?
+  deployedById String?
+  notes        String?
+  deployedAt   DateTime          @default(now())
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  project      Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  deployedBy   User?             @relation(fields: [deployedById], references: [id])
 
   @@index([projectId, deployedAt])
   @@index([environment, status])
@@ -191,43 +232,43 @@ model Deployment {
 }
 
 model ProjectUpdate {
-  id         String    @id @default(cuid())
-  legacyId   String?   @unique
-  projectId  String
-  authorId   String?
-  authorName String
-  title      String?
-  description String?
-  content    String
-  status     String?
-  blockers   String?
-  nextStep   String?
-  hours      Float?
+  id           String       @id @default(cuid())
+  legacyId     String?      @unique
+  projectId    String
+  authorId     String?
+  authorName   String
+  title        String?
+  description  String?
+  content      String
+  status       String?
+  blockers     String?
+  nextStep     String?
+  hours        Float?
   activityType ActivityType @default(PROJECT)
-  createdAt  DateTime  @default(now())
-  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  author     Employee? @relation(fields: [authorId], references: [id])
+  createdAt    DateTime     @default(now())
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author       Employee?    @relation(fields: [authorId], references: [id])
 
   @@index([projectId])
 }
 
 model WorkLog {
-  id          String        @id @default(cuid())
-  legacyId    String?       @unique
-  employeeId  String
-  projectId   String?
-  title       String
-  description String
-  date        DateTime
-  mode        WorkLogMode
-  activityType ActivityType @default(PROJECT)
-  hours       Float?
-  status      WorkLogStatus @default(SUBMITTED)
-  employee    Employee      @relation(fields: [employeeId], references: [id])
-  project     Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-  deletedAt   DateTime?
+  id           String        @id @default(cuid())
+  legacyId     String?       @unique
+  employeeId   String
+  projectId    String?
+  title        String
+  description  String
+  date         DateTime
+  mode         WorkLogMode
+  activityType ActivityType  @default(PROJECT)
+  hours        Float?
+  status       WorkLogStatus @default(SUBMITTED)
+  employee     Employee      @relation(fields: [employeeId], references: [id])
+  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  deletedAt    DateTime?
 
   @@index([employeeId, date])
   @@index([projectId])
@@ -236,8 +277,8 @@ model WorkLog {
 }
 
 model LicenseRequest {
-  id              String        @id @default(cuid())
-  legacyId        String?       @unique
+  id              String          @id @default(cuid())
+  legacyId        String?         @unique
   employeeId      String
   articleId       String?
   article         String
@@ -245,12 +286,12 @@ model LicenseRequest {
   endDate         DateTime
   reason          String
   certificateName String?
-  status          LicenseStatus @default(PENDING)
-  dateRequested   DateTime      @default(now())
-  employee        Employee      @relation(fields: [employeeId], references: [id])
+  status          LicenseStatus   @default(PENDING)
+  dateRequested   DateTime        @default(now())
+  employee        Employee        @relation(fields: [employeeId], references: [id])
   licenseArticle  LicenseArticle? @relation(fields: [articleId], references: [id])
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
   deletedAt       DateTime?
 
   @@index([employeeId, status])
@@ -274,22 +315,22 @@ model LicenseArticle {
 }
 
 model LicenseArticleField {
-  id           String            @id @default(cuid())
+  id           String           @id @default(cuid())
   articleId    String
-  article      LicenseArticle    @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  article      LicenseArticle   @relation(fields: [articleId], references: [id], onDelete: Cascade)
   key          String
   label        String
-  type         LicenseFieldType  @default(TEXT)
-  page         Int               @default(1)
+  type         LicenseFieldType @default(TEXT)
+  page         Int              @default(1)
   x            Float
   y            Float
   width        Float?
   height       Float?
-  fontSize     Float             @default(10)
+  fontSize     Float            @default(10)
   defaultValue String?
-  required     Boolean           @default(false)
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
+  required     Boolean          @default(false)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
 
   @@unique([articleId, key])
   @@index([articleId])
@@ -307,24 +348,24 @@ model LicenseRule {
 }
 
 model StrikeConfig {
-  id                  String   @id @default("default")
+  id                  String    @id @default("default")
   nextDate            DateTime?
   nextCoverEmployeeId String?
   lastDate            DateTime?
   lastCoverEmployeeId String?
   notes               String?
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 }
 
 model RemoteDay {
-  id         String   @id @default(cuid())
-  legacyId   String?  @unique
+  id         String    @id @default(cuid())
+  legacyId   String?   @unique
   employeeId String
   day        String
   date       DateTime?
-  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  createdAt  DateTime @default(now())
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
 
   @@unique([employeeId, day])
   @@index([employeeId])

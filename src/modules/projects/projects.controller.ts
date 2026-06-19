@@ -5,6 +5,7 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { CreateProjectCommentDto } from './dto/create-project-comment.dto';
 import { CreateProjectUpdateDto } from './dto/create-project-update.dto';
 import { CreateDeploymentDto } from './dto/create-deployment.dto';
 import { UpdateDeploymentDto } from './dto/update-deployment.dto';
@@ -67,6 +68,21 @@ export class ProjectsController {
   @Post(':id/logs')
   addLog(@Param('id') id: string, @Body() dto: CreateProjectUpdateDto, @CurrentUser() user: JwtUser) {
     return this.projects.addUpdate(id, dto, user);
+  }
+
+  @Get(':id/comments')
+  comments(@Param('id') id: string, @CurrentUser() user: JwtUser) {
+    return this.projects.comments(id, user);
+  }
+
+  @Post(':id/comments')
+  addComment(@Param('id') id: string, @Body() dto: CreateProjectCommentDto, @CurrentUser() user: JwtUser) {
+    return this.projects.addComment(id, dto.message, user);
+  }
+
+  @Delete(':id/comments/:commentId')
+  deleteComment(@Param('id') id: string, @Param('commentId') commentId: string, @CurrentUser() user: JwtUser) {
+    return this.projects.deleteComment(id, commentId, user);
   }
 
   @Get(':id/deployments')
