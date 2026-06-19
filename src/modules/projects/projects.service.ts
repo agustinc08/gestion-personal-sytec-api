@@ -281,6 +281,6 @@ export class ProjectsService {
     if (!comment) throw new NotFoundException('Comentario no encontrado');
     if (user.role !== Role.ADMIN && comment.authorUserId !== user.id) throw new ForbiddenException();
     await this.prisma.projectComment.update({ where: { id: commentId }, data: { deletedAt: new Date() } });
-    return { status: 'success' };
+    return { status: 'success', message: 'Proyecto eliminado correctamente' };
   }
 }

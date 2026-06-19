@@ -40,11 +40,13 @@ export class LicensesService {
     if (!current) throw new NotFoundException('Licencia no encontrada');
     return licenseToDto(await this.prisma.licenseRequest.update({ where: { id }, data: { status: LicenseStatus.REJECTED } }));
   }
-  async remove(id: string) {
+  async remove(id: string, user: JwtUser) {
     const current = await this.prisma.licenseRequest.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException('Licencia no encontrada');
+    if (user.role !== Role.ADMIN && current.employeeId !== user.employeeId) throw new ForbiddenException('No tenés permisos para eliminar esta solicitud');
+    if (user.role !== Role.ADMIN && current.status !== LicenseStatus.PENDING) throw new ForbiddenException('No se puede eliminar una solicitud ya aprobada o rechazada');
     await this.prisma.licenseRequest.update({ where: { id }, data: { deletedAt: new Date() } });
-    return { status: 'success' };
+    return { status: 'success', message: 'Solicitud eliminada correctamente' };
   }
   async clear() {
     const result = await this.prisma.licenseRequest.updateMany({ where: { deletedAt: null }, data: { deletedAt: new Date() } });

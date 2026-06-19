@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { toActivityType, toDate, toWorkLogMode, workLogToDto } from '../../shared/mappers';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
@@ -35,13 +35,16 @@ export class WorkLogsService {
   async create(dto: CreateWorkLogDto, user: JwtUser) {
     const employeeId = user.role === Role.ADMIN && dto.employeeId ? dto.employeeId : user.employeeId;
     if (!employeeId) throw new ForbiddenException();
+    const date = toDate(dto.date)!;
+    const existing = await this.prisma.workLog.findFirst({ where: { employeeId, date, deletedAt: null }, select: { id: true } });
+    if (existing) throw new ConflictException({ message: 'Ya existe un parte diario para este empleado y fecha', workLogId: existing.id });
     return workLogToDto(await this.prisma.workLog.create({
       data: {
         employeeId,
         projectId: dto.projectId || null,
         title: dto.title,
         description: dto.description,
-        date: toDate(dto.date)!,
+        date,
         mode: toWorkLogMode(dto.mode),
         activityType: toActivityType(dto.activityType),
         hours: dto.hours,
@@ -50,16 +53,21 @@ export class WorkLogsService {
     }));
   }
   async update(id: string, dto: UpdateWorkLogDto, user: JwtUser) {
-    const current = await this.prisma.workLog.findUnique({ where: { id } });
+    const current = await this.prisma.workLog.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException();
     if (user.role !== Role.ADMIN && current.employeeId !== user.employeeId) throw new ForbiddenException();
+    const date = dto.date ? toDate(dto.date)! : current.date;
+    if (date.getTime() !== current.date.getTime()) {
+      const duplicate = await this.prisma.workLog.findFirst({ where: { employeeId: current.employeeId, date, deletedAt: null, id: { not: id } }, select: { id: true } });
+      if (duplicate) throw new ConflictException('Ya existe otro parte diario para este empleado y fecha');
+    }
     return workLogToDto(await this.prisma.workLog.update({
       where: { id },
       data: {
         projectId: dto.projectId === '' ? null : dto.projectId,
         title: dto.title,
         description: dto.description,
-        date: dto.date ? toDate(dto.date) : undefined,
+        date,
         mode: dto.mode ? toWorkLogMode(dto.mode) : undefined,
         activityType: dto.activityType ? toActivityType(dto.activityType) : undefined,
         hours: dto.hours,

@@ -28,5 +28,5 @@ export class LicensesController {
     res.send(pdf);
   }
   @Delete() @Roles(Role.ADMIN) clear() { return this.licenses.clear(); }
-  @Delete(':id') @Roles(Role.ADMIN) remove(@Param('id') id: string) { return this.licenses.remove(id); }
+  @Delete(':id') remove(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.licenses.remove(id, user); }
 }
