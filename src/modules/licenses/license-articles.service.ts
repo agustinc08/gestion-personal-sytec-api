@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { LicenseFieldType } from '@prisma/client';
 import { mkdir, readFile, writeFile } from 'fs/promises';
-import { join } from 'path';
+import { extname, join } from 'path';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLicenseArticleFieldDto } from './dto/create-license-article-field.dto';
@@ -78,8 +78,11 @@ export class LicenseArticlesService {
 
   async uploadTemplate(id: string, file: any) {
     const article = await this.findOne(id);
-    if (!file) throw new BadRequestException('PDF requerido');
-    if (file.mimetype !== 'application/pdf') throw new BadRequestException('Solo se permiten archivos PDF');
+    if (!file) throw new BadRequestException('La plantilla debe ser un archivo PDF.');
+    const isPdfExtension = extname(file.originalname || '').toLowerCase() === '.pdf';
+    if (file.mimetype !== 'application/pdf' || !isPdfExtension) {
+      throw new BadRequestException('La plantilla debe ser un archivo PDF.');
+    }
 
     const uploadDir = join(process.cwd(), 'uploads', 'license-templates');
     await mkdir(uploadDir, { recursive: true });
