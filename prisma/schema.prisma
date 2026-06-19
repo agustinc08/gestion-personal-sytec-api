@@ -116,6 +116,8 @@ model Employee {
   email            String?          @unique
   avatar           String?
   dependency       String
+  dependencyId     String?
+  dependencyRef    Dependency?      @relation(fields: [dependencyId], references: [id], onDelete: SetNull)
   position         String?
   cuil             String           @unique
   totalLicenseDays Int              @default(0)
@@ -133,7 +135,21 @@ model Employee {
   deletedAt        DateTime?
 
   @@index([dependency])
+  @@index([dependencyId])
   @@index([strikeDutyOrder])
+}
+
+model Dependency {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  description String?
+  isActive    Boolean    @default(true)
+  employees   Employee[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  deletedAt   DateTime?
+
+  @@index([isActive, deletedAt])
 }
 
 model Project {

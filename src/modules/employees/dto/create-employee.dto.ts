@@ -4,7 +4,8 @@ export class CreateEmployeeDto {
   @IsString() name!: string;
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsString() avatar?: string;
-  @IsString() dependency!: string;
+  @IsOptional() @IsString() dependency?: string;
+  @IsOptional() @IsString() dependencyId?: string;
   @IsOptional() @IsString() position?: string;
   @IsString() @IsNotEmpty() cuil!: string;
   @IsOptional() @IsInt() @Min(0) totalLicenseDays?: number;

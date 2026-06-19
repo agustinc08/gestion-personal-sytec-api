@@ -12,6 +12,7 @@ import { StrikeModule } from './modules/strike/strike.module';
 import { UsersModule } from './modules/users/users.module';
 import { WorkLogsModule } from './modules/work-logs/work-logs.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { DependenciesModule } from './modules/dependencies/dependencies.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     DashboardModule,
     StatisticsModule,
     NotificationsModule,
+    DependenciesModule,
   ],
   controllers: [HealthController],
 })

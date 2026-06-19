@@ -20,7 +20,7 @@ export class EmployeesService {
   async findAll() {
     const rows = await this.prisma.employee.findMany({
       where: { deletedAt: null },
-      include: { user: true, remoteDays: true, licenseRequests: true },
+      include: { user: true, remoteDays: true, licenseRequests: true, dependencyRef: true },
       orderBy: { name: 'asc' },
     });
     return rows.map(employeeToDto);
@@ -30,7 +30,7 @@ export class EmployeesService {
     if (user?.role !== Role.ADMIN && user?.employeeId !== id) throw new ForbiddenException();
     const row = await this.prisma.employee.findFirst({
       where: { id, deletedAt: null },
-      include: { user: true, remoteDays: true, licenseRequests: true },
+      include: { user: true, remoteDays: true, licenseRequests: true, dependencyRef: true },
     });
     if (!row) throw new NotFoundException('Empleado no encontrado');
     return employeeToDto(row);
@@ -44,12 +44,18 @@ export class EmployeesService {
   async create(dto: CreateEmployeeDto) {
     const cuil = this.cleanCuil(dto.cuil);
     const password = dto.password || dto.cuil || 'Temporal123';
+    const dependency = dto.dependencyId
+      ? await this.prisma.dependency.findFirst({ where: { id: dto.dependencyId, deletedAt: null, isActive: true } })
+      : dto.dependency ? await this.prisma.dependency.findFirst({ where: { name: { equals: dto.dependency.trim(), mode: 'insensitive' }, deletedAt: null } }) : null;
+    if (dto.dependencyId && !dependency) throw new BadRequestException('Dependencia inválida o inactiva');
+    const dependencyName = dependency?.name || dto.dependency?.trim() || 'Sin dependencia';
     const employee = await this.prisma.employee.create({
       data: {
         name: dto.name,
         email: dto.email,
         avatar: dto.avatar,
-        dependency: dto.dependency,
+        dependency: dependencyName,
+        dependencyId: dependency?.id,
         position: dto.position,
         cuil,
         totalLicenseDays: dto.totalLicenseDays || 0,
@@ -75,13 +81,18 @@ export class EmployeesService {
     if (!isAdmin && user?.employeeId !== id) throw new ForbiddenException();
     const current = await this.prisma.employee.findFirst({ where: { id, deletedAt: null }, include: { user: true } });
     if (!current) throw new NotFoundException('Empleado no encontrado');
+    const dependency = isAdmin && dto.dependencyId
+      ? await this.prisma.dependency.findFirst({ where: { id: dto.dependencyId, deletedAt: null, isActive: true } })
+      : null;
+    if (isAdmin && dto.dependencyId && !dependency) throw new BadRequestException('Dependencia inválida o inactiva');
     await this.prisma.employee.update({
       where: { id },
       data: {
         name: dto.name,
         email: dto.email,
         avatar: dto.avatar,
-        dependency: dto.dependency,
+        dependency: isAdmin ? dependency?.name || dto.dependency : undefined,
+        dependencyId: isAdmin ? dependency?.id : undefined,
         position: dto.position,
         cuil: isAdmin && dto.cuil ? this.cleanCuil(dto.cuil) : undefined,
         totalLicenseDays: isAdmin ? dto.totalLicenseDays : undefined,
