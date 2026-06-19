@@ -7,3 +7,11 @@ coverage
 .DS_Store
 db-store.json
 *.log
+uploads/*
+!uploads/.gitkeep
+!uploads/avatars/
+uploads/avatars/*
+!uploads/avatars/.gitkeep
+!uploads/license-templates/
+uploads/license-templates/*
+!uploads/license-templates/.gitkeep

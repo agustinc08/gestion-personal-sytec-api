@@ -1,0 +1,7 @@
+ALTER TABLE "ProjectUpdate"
+ADD COLUMN "title" TEXT,
+ADD COLUMN "description" TEXT,
+ADD COLUMN "status" TEXT,
+ADD COLUMN "blockers" TEXT,
+ADD COLUMN "nextStep" TEXT,
+ADD COLUMN "hours" DOUBLE PRECISION;

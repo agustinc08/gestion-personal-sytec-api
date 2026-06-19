@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { CurrentUser, JwtUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -12,8 +12,8 @@ import { WorkLogsService } from './work-logs.service';
 @Controller('work-logs')
 export class WorkLogsController {
   constructor(private workLogs: WorkLogsService) {}
-  @Get() @Roles(Role.ADMIN) findAll() { return this.workLogs.findAll(); }
-  @Get('my') mine(@CurrentUser() user: JwtUser) { return this.workLogs.findMine(user); }
+  @Get() @Roles(Role.ADMIN) findAll(@Query() query: Record<string, string>) { return this.workLogs.findAll(query); }
+  @Get('my') mine(@CurrentUser() user: JwtUser, @Query() query: Record<string, string>) { return this.workLogs.findMine(user, query); }
   @Post() create(@Body() dto: CreateWorkLogDto, @CurrentUser() user: JwtUser) { return this.workLogs.create(dto, user); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateWorkLogDto, @CurrentUser() user: JwtUser) { return this.workLogs.update(id, dto, user); }
   @Delete(':id') remove(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.workLogs.remove(id, user); }
