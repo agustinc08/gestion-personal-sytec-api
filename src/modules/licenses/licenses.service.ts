@@ -39,6 +39,10 @@ export class LicensesService {
     const current = await this.prisma.licenseRequest.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException('Licencia no encontrada');
     const updated = await this.prisma.licenseRequest.update({ where: { id }, data: { status: LicenseStatus.APPROVED } });
+    if (current.status !== LicenseStatus.APPROVED && current.article === 'Guardia en Feria') {
+      const days = Math.max(1, Math.round((+current.endDate - +current.startDate) / 86400000) + 1);
+      await this.prisma.employee.update({ where: { id: current.employeeId }, data: { compensatoryDays: { increment: days } } });
+    }
     await this.audit.record(user, { action: 'APPROVE', module: 'LICENSES', entityType: 'LicenseRequest', entityId: id, title: updated.article, detail: 'Licencia aprobada' });
     return licenseToDto(updated);
   }

@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { LicenseStatus, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { mkdir, writeFile } from 'fs/promises';
 import { extname, join } from 'path';
@@ -153,13 +153,11 @@ export class EmployeesService {
     return this.findOne(id, { id: user.id, cuil: user.cuil, email: user.email, role: Role.ADMIN });
   }
 
-  async resetGuardias(id: string) {
+  async adjustCompensatoryDays(id: string, days: number, user: JwtUser) {
     const current = await this.prisma.employee.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException('Empleado no encontrado');
-    await this.prisma.licenseRequest.updateMany({
-      where: { employeeId: id, article: 'Guardia en Feria', status: LicenseStatus.APPROVED, deletedAt: null },
-      data: { deletedAt: new Date() },
-    });
+    await this.prisma.employee.update({ where: { id }, data: { compensatoryDays: days } });
+    await this.audit.record(user, { action: 'RESET_COMPENSATORY_DAYS', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: current.name, detail: `Ajustó días compensatorios de ${current.compensatoryDays} a ${days}` });
     return this.findOne(id, { id: '', cuil: '', email: '', role: Role.ADMIN });
   }
 }

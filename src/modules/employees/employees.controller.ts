@@ -8,6 +8,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { EmployeesService } from './employees.service';
+import { AdjustCompensatoryDaysDto } from './dto/adjust-compensatory-days.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('employees')
@@ -24,6 +25,7 @@ export class EmployeesController {
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateEmployeeDto, @CurrentUser() user: JwtUser) { return this.employees.update(id, dto, user); }
   @Post(':id/avatar') @UseInterceptors(FileInterceptor('avatar', { limits: { fileSize: 5 * 1024 * 1024 } }))
   uploadAvatar(@Param('id') id: string, @UploadedFile() file: any, @CurrentUser() user: JwtUser) { return this.employees.updateAvatar(id, file, user); }
-  @Post(':id/reset-guardias') @Roles(Role.ADMIN) resetGuardias(@Param('id') id: string) { return this.employees.resetGuardias(id); }
+  @Post(':id/reset-guardias') @Roles(Role.ADMIN) resetGuardias(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.employees.adjustCompensatoryDays(id, 0, user); }
+  @Patch(':id/compensatory-days') @Roles(Role.ADMIN) adjustCompensatoryDays(@Param('id') id: string, @Body() dto: AdjustCompensatoryDaysDto, @CurrentUser() user: JwtUser) { return this.employees.adjustCompensatoryDays(id, dto.days, user); }
   @Delete(':id') @Roles(Role.ADMIN) remove(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.employees.remove(id, user); }
 }

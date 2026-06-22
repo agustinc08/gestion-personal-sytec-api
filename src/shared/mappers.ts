@@ -124,7 +124,7 @@ export function employeeToDto(employee: any) {
     dependency: employee.dependencyRef?.name || employee.dependency,
     dependencyId: employee.dependencyId || '',
     position: employee.position || '',
-    guardiasDone: sumDays('Guardia en Feria'),
+    guardiasDone: employee.compensatoryDays ?? sumDays('Guardia en Feria'),
     totalLicenseDays: employee.totalLicenseDays,
     licenseDaysTaken: sumDays('Art. 14'),
     remoteDaysAssigned: (employee.remoteDays || []).map((d: any) => d.day),

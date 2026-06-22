@@ -17,6 +17,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { SearchModule } from './modules/search/search.module';
 import { ExportsModule } from './modules/exports/exports.module';
+import { AnnouncementsModule } from './modules/announcements/announcements.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { ExportsModule } from './modules/exports/exports.module';
     SettingsModule,
     SearchModule,
     ExportsModule,
+    AnnouncementsModule,
   ],
   controllers: [HealthController],
 })

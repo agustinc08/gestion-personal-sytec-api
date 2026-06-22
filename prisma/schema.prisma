@@ -88,6 +88,22 @@ enum WorkLogStatus {
   REJECTED
 }
 
+enum AnnouncementType {
+  GENERAL
+  STRIKE
+  SALARY
+  LICENSE
+  PROJECT
+  SYSTEM
+}
+
+enum AnnouncementPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
 model User {
   id                 String           @id @default(cuid())
   cuil               String           @unique
@@ -102,6 +118,8 @@ model User {
   deployments        Deployment[]
   notifications      Notification[]
   projectComments    ProjectComment[]
+  createdAnnouncements Announcement[] @relation("AnnouncementCreator")
+  announcementReads  AnnouncementRead[]
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
   deletedAt          DateTime?
@@ -121,6 +139,7 @@ model Employee {
   position         String?
   cuil             String           @unique
   totalLicenseDays Int              @default(0)
+  compensatoryDays Int              @default(0)
   strikeDutyOrder  Int              @default(-1)
   user             User?
   remoteDays       RemoteDay[]
@@ -131,6 +150,7 @@ model Employee {
   authoredUpdates  ProjectUpdate[]
   notifications    Notification[]
   auditLogs        AuditLog[]
+  targetedAnnouncements Announcement[]
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   deletedAt        DateTime?
@@ -146,11 +166,52 @@ model Dependency {
   description String?
   isActive    Boolean    @default(true)
   employees   Employee[]
+  announcements Announcement[]
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   deletedAt   DateTime?
 
   @@index([isActive, deletedAt])
+}
+
+model Announcement {
+  id                 String               @id @default(cuid())
+  title              String
+  message            String
+  type               AnnouncementType     @default(GENERAL)
+  priority           AnnouncementPriority @default(NORMAL)
+  targetRole         Role?
+  targetDependencyId String?
+  targetEmployeeId   String?
+  startsAt           DateTime?
+  endsAt             DateTime?
+  pinned             Boolean              @default(false)
+  isActive            Boolean              @default(true)
+  createdByUserId    String
+  createdBy          User                 @relation("AnnouncementCreator", fields: [createdByUserId], references: [id])
+  targetDependency   Dependency?          @relation(fields: [targetDependencyId], references: [id], onDelete: SetNull)
+  targetEmployee     Employee?            @relation(fields: [targetEmployeeId], references: [id], onDelete: SetNull)
+  reads              AnnouncementRead[]
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  deletedAt          DateTime?
+
+  @@index([isActive, startsAt, endsAt])
+  @@index([targetRole])
+  @@index([targetDependencyId])
+  @@index([targetEmployeeId])
+}
+
+model AnnouncementRead {
+  id             String       @id @default(cuid())
+  announcementId String
+  userId         String
+  readAt         DateTime     @default(now())
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, userId])
+  @@index([userId, readAt])
 }
 
 model Project {
