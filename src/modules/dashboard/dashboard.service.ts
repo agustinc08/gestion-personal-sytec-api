@@ -67,6 +67,35 @@ export class DashboardService {
       projectsWithoutOwner,
     };
   }
+  async adminSummary() {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today.getTime() + 86400000);
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const alertLimit = new Date(today.getTime() + 15 * 86400000);
+    const [employeesActive, dependenciesActive, workLogsToday, expectedEmployees, pendingLicenses, approvedLicensesMonth, activeProjects, overdueProjects, upcomingProjects, strike, recentAudit, stackRows] = await Promise.all([
+      this.prisma.employee.count({ where: { deletedAt: null } }),
+      this.prisma.dependency.count({ where: { deletedAt: null, isActive: true } }),
+      this.prisma.workLog.count({ where: { deletedAt: null, date: { gte: today, lt: tomorrow } } }),
+      this.prisma.user.count({ where: { deletedAt: null, role: 'EMPLOYEE', employee: { deletedAt: null } } }),
+      this.prisma.licenseRequest.count({ where: { deletedAt: null, status: 'PENDING' } }),
+      this.prisma.licenseRequest.count({ where: { deletedAt: null, status: 'APPROVED', updatedAt: { gte: monthStart } } }),
+      this.prisma.project.count({ where: { deletedAt: null, status: { notIn: [ProjectStatus.COMPLETED, ProjectStatus.FINISHED, ProjectStatus.ARCHIVED] } } }),
+      this.prisma.project.count({ where: { deletedAt: null, deadline: { lt: today } } }),
+      this.prisma.project.count({ where: { deletedAt: null, deadline: { gte: today, lte: alertLimit } } }),
+      this.prisma.strikeConfig.findUnique({ where: { id: 'default' } }),
+      this.prisma.auditLog.findMany({ include: { employee: { select: { name: true } } }, orderBy: { createdAt: 'desc' }, take: 6 }),
+      this.prisma.project.findMany({ where: { deletedAt: null, techStack: { not: null } }, select: { techStack: true } }),
+    ]);
+    const technologyCounts = new Map<string, number>();
+    stackRows.flatMap((row) => (row.techStack || '').split(/[,;/|]+/)).map((value) => value.trim()).filter(Boolean).forEach((value) => technologyCounts.set(value, (technologyCounts.get(value) || 0) + 1));
+    return {
+      employeesActive, dependenciesActive, workLogsToday, workLogsPendingToday: Math.max(0, expectedEmployees - workLogsToday), pendingLicenses,
+      approvedLicensesMonth, activeProjects, overdueProjects, upcomingProjects,
+      nextStrikeDuty: strike?.nextDate ? { date: strike.nextDate, employeeId: strike.nextCoverEmployeeId, notes: strike.notes } : null,
+      technologies: [...technologyCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => ({ name, count })),
+      recentAudit: recentAudit.map((row) => ({ id: row.id, action: row.action, module: row.module, title: row.title, detail: row.detail, employeeName: row.employee?.name, createdAt: row.createdAt })),
+    };
+  }
   async employee(employeeId?: string | null) {
     if (!employeeId) return {};
     const [licenses, workLogs, projects] = await Promise.all([

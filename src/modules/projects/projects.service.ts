@@ -8,6 +8,7 @@ import { CreateProjectDto } from './dto/create-project.dto';
 import { CreateProjectUpdateDto } from './dto/create-project-update.dto';
 import { UpdateDeploymentDto } from './dto/update-deployment.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { AuditService } from '../audit/audit.service';
 
 const projectInclude = {
   assignedEmployees: true,
@@ -18,7 +19,7 @@ const projectInclude = {
 
 @Injectable()
 export class ProjectsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private audit: AuditService) {}
 
   private accessWhere(user: JwtUser) {
     return user.role === Role.ADMIN ? {} : { assignedEmployees: { some: { id: user.employeeId || '' } } };
@@ -95,6 +96,7 @@ export class ProjectsService {
       },
       include: projectInclude,
     });
+    await this.audit.record(user, { action: 'CREATE', module: 'PROJECTS', entityType: 'Project', entityId: project.id, title: project.name, detail: 'Proyecto creado' });
     return projectToDto(project);
   }
 
@@ -138,13 +140,15 @@ export class ProjectsService {
       },
       include: projectInclude,
     });
+    await this.audit.record(user, { action: 'UPDATE', module: 'PROJECTS', entityType: 'Project', entityId: project.id, title: project.name, detail: 'Proyecto editado' });
     return projectToDto(project);
   }
 
-  async remove(id: string) {
+  async remove(id: string, user: JwtUser) {
     const current = await this.prisma.project.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException('Proyecto no encontrado');
     await this.prisma.project.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.audit.record(user, { action: 'DELETE', module: 'PROJECTS', entityType: 'Project', entityId: id, title: current.name, detail: 'Proyecto ocultado de los listados' });
     return { status: 'success' };
   }
 
@@ -161,7 +165,7 @@ export class ProjectsService {
     if (!current) throw new NotFoundException('Proyecto no encontrado');
     this.assertAdminOrAssigned(current, user);
 
-    await this.prisma.projectUpdate.create({
+    const update = await this.prisma.projectUpdate.create({
       data: {
         projectId: id,
         content: dto.content,
@@ -176,6 +180,7 @@ export class ProjectsService {
         authorId: user.employeeId,
       },
     });
+    await this.audit.record(user, { action: 'CREATE_UPDATE', module: 'PROJECTS', entityType: 'ProjectUpdate', entityId: update.id, title: current.name, detail: 'Avance de proyecto agregado' });
     return this.findOne(id, user);
   }
 
@@ -271,7 +276,8 @@ export class ProjectsService {
 
   async addComment(id: string, message: string, user: JwtUser) {
     await this.findOne(id, user);
-    await this.prisma.projectComment.create({ data: { projectId: id, authorUserId: user.id, message: message.trim() } });
+    const comment = await this.prisma.projectComment.create({ data: { projectId: id, authorUserId: user.id, message: message.trim() } });
+    await this.audit.record(user, { action: 'CREATE_COMMENT', module: 'PROJECTS', entityType: 'ProjectComment', entityId: comment.id, title: 'Comentario agregado', detail: `Comentario interno en proyecto ${id}` });
     return this.comments(id, user);
   }
 
@@ -281,6 +287,7 @@ export class ProjectsService {
     if (!comment) throw new NotFoundException('Comentario no encontrado');
     if (user.role !== Role.ADMIN && comment.authorUserId !== user.id) throw new ForbiddenException();
     await this.prisma.projectComment.update({ where: { id: commentId }, data: { deletedAt: new Date() } });
+    await this.audit.record(user, { action: 'DELETE_COMMENT', module: 'PROJECTS', entityType: 'ProjectComment', entityId: commentId, title: 'Comentario eliminado', detail: `Comentario interno en proyecto ${id}` });
     return { status: 'success', message: 'Proyecto eliminado correctamente' };
   }
 }

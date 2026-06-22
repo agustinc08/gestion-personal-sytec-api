@@ -130,6 +130,7 @@ model Employee {
   ownedProjects    Project[]        @relation("ProjectOwner")
   authoredUpdates  ProjectUpdate[]
   notifications    Notification[]
+  auditLogs        AuditLog[]
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   deletedAt        DateTime?
@@ -388,15 +389,36 @@ model RemoteDay {
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String?
-  action    String
-  entity    String
-  entityId  String?
-  metadata  Json?
-  user      User?    @relation(fields: [userId], references: [id])
-  createdAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  userId     String?
+  employeeId String?
+  action     String
+  module     String    @default("SYSTEM")
+  entity     String
+  entityType String?
+  entityId   String?
+  title      String?
+  detail     String?
+  metadata   Json?
+  ip         String?
+  userAgent  String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  employee   Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now())
 
   @@index([userId])
+  @@index([employeeId])
+  @@index([module, action])
+  @@index([createdAt])
   @@index([entity, entityId])
+}
+
+model SystemSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       Json
+  label       String
+  description String?
+  type        String
+  updatedAt   DateTime @updatedAt
 }

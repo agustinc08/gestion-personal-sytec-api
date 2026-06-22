@@ -13,6 +13,10 @@ import { UsersModule } from './modules/users/users.module';
 import { WorkLogsModule } from './modules/work-logs/work-logs.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { DependenciesModule } from './modules/dependencies/dependencies.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { SettingsModule } from './modules/settings/settings.module';
+import { SearchModule } from './modules/search/search.module';
+import { ExportsModule } from './modules/exports/exports.module';
 
 @Module({
   imports: [
@@ -29,6 +33,10 @@ import { DependenciesModule } from './modules/dependencies/dependencies.module';
     StatisticsModule,
     NotificationsModule,
     DependenciesModule,
+    AuditModule,
+    SettingsModule,
+    SearchModule,
+    ExportsModule,
   ],
   controllers: [HealthController],
 })

@@ -5,10 +5,11 @@ import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkLogDto } from './dto/create-work-log.dto';
 import { UpdateWorkLogDto } from './dto/update-work-log.dto';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class WorkLogsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private audit: AuditService) {}
 
   private where(query: Record<string, string> = {}, employeeId?: string) {
     const where: any = { deletedAt: null };
@@ -38,7 +39,7 @@ export class WorkLogsService {
     const date = toDate(dto.date)!;
     const existing = await this.prisma.workLog.findFirst({ where: { employeeId, date, deletedAt: null }, select: { id: true } });
     if (existing) throw new ConflictException({ message: 'Ya existe un parte diario para este empleado y fecha', workLogId: existing.id });
-    return workLogToDto(await this.prisma.workLog.create({
+    const created = await this.prisma.workLog.create({
       data: {
         employeeId,
         projectId: dto.projectId || null,
@@ -50,7 +51,9 @@ export class WorkLogsService {
         hours: dto.hours,
       },
       include: { project: true },
-    }));
+    });
+    await this.audit.record(user, { action: 'CREATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: created.id, title: created.title, detail: 'Parte diario creado' });
+    return workLogToDto(created);
   }
   async update(id: string, dto: UpdateWorkLogDto, user: JwtUser) {
     const current = await this.prisma.workLog.findFirst({ where: { id, deletedAt: null } });
@@ -61,7 +64,7 @@ export class WorkLogsService {
       const duplicate = await this.prisma.workLog.findFirst({ where: { employeeId: current.employeeId, date, deletedAt: null, id: { not: id } }, select: { id: true } });
       if (duplicate) throw new ConflictException('Ya existe otro parte diario para este empleado y fecha');
     }
-    return workLogToDto(await this.prisma.workLog.update({
+    const updated = await this.prisma.workLog.update({
       where: { id },
       data: {
         projectId: dto.projectId === '' ? null : dto.projectId,
@@ -73,7 +76,9 @@ export class WorkLogsService {
         hours: dto.hours,
       },
       include: { project: true },
-    }));
+    });
+    await this.audit.record(user, { action: 'UPDATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: updated.title, detail: 'Parte diario editado' });
+    return workLogToDto(updated);
   }
   async remove(id: string, user: JwtUser) {
     const current = await this.prisma.workLog.findUnique({ where: { id } });

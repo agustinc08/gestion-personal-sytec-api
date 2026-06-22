@@ -20,10 +20,10 @@ export class EmployeesController {
   @Post('me/avatar') @UseInterceptors(FileInterceptor('avatar', { limits: { fileSize: 5 * 1024 * 1024 } }))
   uploadMyAvatar(@CurrentUser() user: JwtUser, @UploadedFile() file: any) { return this.employees.updateAvatar(user.employeeId!, file, user); }
   @Get(':id') findOne(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.employees.findOne(id, user); }
-  @Post() @Roles(Role.ADMIN) create(@Body() dto: CreateEmployeeDto) { return this.employees.create(dto); }
+  @Post() @Roles(Role.ADMIN) create(@Body() dto: CreateEmployeeDto, @CurrentUser() user: JwtUser) { return this.employees.create(dto, user); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateEmployeeDto, @CurrentUser() user: JwtUser) { return this.employees.update(id, dto, user); }
   @Post(':id/avatar') @UseInterceptors(FileInterceptor('avatar', { limits: { fileSize: 5 * 1024 * 1024 } }))
   uploadAvatar(@Param('id') id: string, @UploadedFile() file: any, @CurrentUser() user: JwtUser) { return this.employees.updateAvatar(id, file, user); }
   @Post(':id/reset-guardias') @Roles(Role.ADMIN) resetGuardias(@Param('id') id: string) { return this.employees.resetGuardias(id); }
-  @Delete(':id') @Roles(Role.ADMIN) remove(@Param('id') id: string) { return this.employees.remove(id); }
+  @Delete(':id') @Roles(Role.ADMIN) remove(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.employees.remove(id, user); }
 }

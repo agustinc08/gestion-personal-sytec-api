@@ -8,10 +8,11 @@ import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class EmployeesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private audit: AuditService) {}
 
   private cleanCuil(cuil: string) {
     return cuil.replace(/\D/g, '');
@@ -41,7 +42,7 @@ export class EmployeesService {
     return this.findOne(user.employeeId, user);
   }
 
-  async create(dto: CreateEmployeeDto) {
+  async create(dto: CreateEmployeeDto, user: JwtUser) {
     const cuil = this.cleanCuil(dto.cuil);
     const password = dto.password || dto.cuil || 'Temporal123';
     const dependency = dto.dependencyId
@@ -73,6 +74,7 @@ export class EmployeesService {
         employeeId: employee.id,
       },
     });
+    await this.audit.record(user, { action: 'CREATE', module: 'EMPLOYEES', entityType: 'Employee', entityId: employee.id, title: employee.name, detail: 'Empleado creado' });
     return this.findOne(employee.id, { id: '', cuil: '', email: '', role: Role.ADMIN });
   }
 
@@ -115,11 +117,15 @@ export class EmployeesService {
         },
       });
     }
+    await this.audit.record(user, { action: 'UPDATE', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: dto.name || current.name, detail: user?.employeeId === id ? 'Perfil propio actualizado' : 'Empleado editado' });
     return this.findOne(id, { id: '', cuil: '', email: '', role: Role.ADMIN });
   }
 
-  async remove(id: string) {
+  async remove(id: string, user: JwtUser) {
+    const current = await this.prisma.employee.findFirst({ where: { id, deletedAt: null } });
+    if (!current) throw new NotFoundException('Empleado no encontrado');
     await this.prisma.employee.update({ where: { id }, data: { deletedAt: new Date(), user: { update: { deletedAt: new Date() } } } });
+    await this.audit.record(user, { action: 'DELETE', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: current.name, detail: 'Empleado desactivado' });
     return { status: 'success' };
   }
 

@@ -19,8 +19,8 @@ export class LicensesController {
   @Get('rules') rules() { return this.licenses.rules(); }
   @Post() create(@Body() dto: CreateLicenseRequestDto, @CurrentUser() user: JwtUser) { return this.licenses.create(dto, user); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateLicenseRequestDto, @CurrentUser() user: JwtUser) { return this.licenses.update(id, dto, user); }
-  @Patch(':id/approve') @Roles(Role.ADMIN) approve(@Param('id') id: string) { return this.licenses.approve(id); }
-  @Patch(':id/reject') @Roles(Role.ADMIN) reject(@Param('id') id: string) { return this.licenses.reject(id); }
+  @Patch(':id/approve') @Roles(Role.ADMIN) approve(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.licenses.approve(id, user); }
+  @Patch(':id/reject') @Roles(Role.ADMIN) reject(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.licenses.reject(id, user); }
   @Post(':id/generate-pdf') @Roles(Role.ADMIN) @Header('Content-Type', 'application/pdf')
   async generatePdf(@Param('id') id: string, @Body() dto: RenderLicensePdfDto, @Res() res: any) {
     const pdf = await this.articles.renderLicensePdf(id, dto);

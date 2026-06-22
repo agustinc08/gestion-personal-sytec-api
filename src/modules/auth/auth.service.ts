@@ -4,10 +4,11 @@ import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class AuthService {
-  constructor(private prisma: PrismaService, private jwt: JwtService) {}
+  constructor(private prisma: PrismaService, private jwt: JwtService, private audit: AuditService) {}
 
   async login(dto: LoginDto) {
     const cleanCuil = dto.cuil.replace(/\D/g, '');
@@ -19,9 +20,10 @@ export class AuthService {
       },
       include: { employee: true },
     });
-    if (!user) throw new UnauthorizedException('Credenciales invalidas');
+    if (!user) { await this.audit.record(null, { action: 'LOGIN_FAILED', module: 'AUTH', entityType: 'User', title: 'Inicio de sesión fallido', detail: `CUIL no reconocido: ${cleanCuil}` }); throw new UnauthorizedException('Credenciales invalidas'); }
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!ok) throw new UnauthorizedException('Credenciales invalidas');
+    if (!ok) { await this.audit.record({ id: user.id, cuil: user.cuil, email: user.email, role: user.role, employeeId: user.employeeId }, { action: 'LOGIN_FAILED', module: 'AUTH', entityType: 'User', entityId: user.id, title: 'Inicio de sesión fallido', detail: 'Contraseña incorrecta' }); throw new UnauthorizedException('Credenciales invalidas'); }
+    await this.audit.record({ id: user.id, cuil: user.cuil, email: user.email, role: user.role, employeeId: user.employeeId }, { action: 'LOGIN_SUCCESS', module: 'AUTH', entityType: 'User', entityId: user.id, title: 'Inicio de sesión exitoso' });
     return this.session(user);
   }
 
