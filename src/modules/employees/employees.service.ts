@@ -92,10 +92,10 @@ export class EmployeesService {
       data: {
         name: dto.name,
         email: dto.email,
-        avatar: dto.avatar,
+        avatar: isAdmin ? dto.avatar : undefined,
         dependency: isAdmin ? dependency?.name || dto.dependency : undefined,
         dependencyId: isAdmin ? dependency?.id : undefined,
-        position: dto.position,
+        position: isAdmin ? dto.position : undefined,
         cuil: isAdmin && dto.cuil ? this.cleanCuil(dto.cuil) : undefined,
         totalLicenseDays: isAdmin ? dto.totalLicenseDays : undefined,
         strikeDutyOrder: isAdmin ? dto.strikeDutyOrder : undefined,

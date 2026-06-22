@@ -45,7 +45,20 @@ export class AnnouncementsService {
     return { message: 'Comunicado eliminado correctamente' };
   }
   async read(id: string, user: JwtUser) {
-    const allowed = await this.prisma.announcement.findFirst({ where: { id, deletedAt: null, AND: [this.targetWhere(user)] } }); if (!allowed) throw new ForbiddenException();
+    const now = new Date();
+    const allowed = await this.prisma.announcement.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+        isActive: true,
+        AND: [
+          this.targetWhere(user),
+          { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+          { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+        ],
+      },
+    });
+    if (!allowed) throw new ForbiddenException('No tenés permisos para acceder a este comunicado');
     return this.prisma.announcementRead.upsert({ where: { announcementId_userId: { announcementId: id, userId: user.id } }, update: { readAt: new Date() }, create: { announcementId: id, userId: user.id } });
   }
   async readAll(user: JwtUser) {

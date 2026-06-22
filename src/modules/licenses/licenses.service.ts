@@ -28,6 +28,9 @@ export class LicensesService {
     const current = await this.prisma.licenseRequest.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException();
     if (user.role !== Role.ADMIN && current.employeeId !== user.employeeId) throw new ForbiddenException();
+    if (user.role !== Role.ADMIN && current.status !== LicenseStatus.PENDING) {
+      throw new ForbiddenException('No se puede editar una solicitud ya aprobada o rechazada');
+    }
     const updated = await this.prisma.licenseRequest.update({ where: { id }, data: {
       articleId: dto.articleId, article: dto.article, startDate: dto.startDate ? toDate(dto.startDate) : undefined, endDate: dto.endDate ? toDate(dto.endDate) : undefined,
       reason: dto.reason, certificateName: dto.certificateName, status: user.role === Role.ADMIN && dto.status ? toLicenseStatus(dto.status) : undefined,
