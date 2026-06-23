@@ -61,12 +61,13 @@ export class EmployeesService {
       },
     });
 
+    const profilePassword = dto.password?.trim();
     if (current.user) {
       await this.prisma.user.update({
         where: { id: current.user.id },
         data: {
           email: email ?? undefined,
-          passwordHash: dto.password ? await bcrypt.hash(dto.password, 10) : undefined,
+          passwordHash: profilePassword ? await bcrypt.hash(profilePassword, 10) : undefined,
         },
       });
     }
@@ -138,6 +139,7 @@ export class EmployeesService {
       await this.prisma.remoteDay.deleteMany({ where: { employeeId: id } });
       await this.prisma.remoteDay.createMany({ data: dto.remoteDaysAssigned.map((day) => ({ employeeId: id, day })), skipDuplicates: true });
     }
+    const password = dto.password?.trim();
     if (current.user) {
       await this.prisma.user.update({
         where: { id: current.user.id },
@@ -146,11 +148,14 @@ export class EmployeesService {
           cuil: isAdmin && dto.cuil ? this.cleanCuil(dto.cuil) : undefined,
           role: isAdmin && dto.isAdmin !== undefined ? toRole(dto.isAdmin) : undefined,
           mustChangePassword: isAdmin ? dto.mustChangePassword : undefined,
-          passwordHash: isAdmin && dto.password ? await bcrypt.hash(dto.password, 10) : undefined,
+          passwordHash: isAdmin && password ? await bcrypt.hash(password, 10) : undefined,
         },
       });
     }
-    await this.audit.record(user, { action: 'UPDATE', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: dto.name || current.name, detail: user?.employeeId === id ? 'Perfil propio actualizado' : 'Empleado editado' });
+    await this.audit.record(user, { action: 'UPDATE_EMPLOYEE', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: dto.name || current.name, detail: user?.employeeId === id ? 'Perfil propio actualizado' : 'Empleado editado' });
+    if (isAdmin && password) {
+      await this.audit.record(user, { action: 'RESET_EMPLOYEE_PASSWORD', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: dto.name || current.name, detail: 'Contraseña de agente actualizada por ADMIN' });
+    }
     return this.findOne(id, { id: '', cuil: '', email: '', role: Role.ADMIN });
   }
 
