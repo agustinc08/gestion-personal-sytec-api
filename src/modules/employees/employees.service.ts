@@ -8,6 +8,7 @@ import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 import { AuditService } from '../audit/audit.service';
 
 @Injectable()
@@ -40,6 +41,38 @@ export class EmployeesService {
   async findMe(user: JwtUser) {
     if (!user.employeeId) throw new NotFoundException('Usuario sin empleado asociado');
     return this.findOne(user.employeeId, user);
+  }
+
+  async updateMe(user: JwtUser, dto: UpdateMyProfileDto) {
+    if (!user.employeeId) throw new NotFoundException('Usuario sin empleado asociado');
+    const current = await this.prisma.employee.findFirst({ where: { id: user.employeeId, deletedAt: null }, include: { user: true } });
+    if (!current) throw new NotFoundException('Empleado no encontrado');
+
+    const name = dto.name?.trim();
+    const email = dto.email?.trim();
+    const avatar = dto.avatar?.trim();
+
+    await this.prisma.employee.update({
+      where: { id: current.id },
+      data: {
+        name: name || undefined,
+        email: email ?? undefined,
+        avatar: avatar || undefined,
+      },
+    });
+
+    if (current.user) {
+      await this.prisma.user.update({
+        where: { id: current.user.id },
+        data: {
+          email: email ?? undefined,
+          passwordHash: dto.password ? await bcrypt.hash(dto.password, 10) : undefined,
+        },
+      });
+    }
+
+    await this.audit.record(user, { action: 'UPDATE', module: 'EMPLOYEES', entityType: 'Employee', entityId: current.id, title: name || current.name, detail: 'Perfil propio actualizado' });
+    return this.findOne(current.id, { id: '', cuil: '', email: '', role: Role.ADMIN });
   }
 
   async create(dto: CreateEmployeeDto, user: JwtUser) {

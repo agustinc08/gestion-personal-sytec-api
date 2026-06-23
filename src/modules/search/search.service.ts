@@ -19,12 +19,15 @@ export class SearchService {
       this.prisma.projectComment.findMany({ where: { deletedAt: null, message: { contains: text, mode: 'insensitive' }, ...(own ? { project: { assignedEmployees: { some: { id: user.employeeId || '' } } } } : {}) }, include: { project: { select: { id: true, name: true } } }, take: 8, orderBy: { createdAt: 'desc' } }),
     ]);
     return {
-      employees: employees.map((row) => ({ type: 'Empleado', title: row.name, subtitle: row.dependency, link: '/?seccion=empleados' })),
-      projects: projects.map((row) => ({ type: 'Proyecto', title: row.name, subtitle: row.requesterDependency, link: `/?seccion=proyectos&proyecto=${row.id}`, date: row.updatedAt })),
-      licenses: licenses.map((row) => ({ type: 'Licencia', title: row.article, subtitle: `${row.employee.name}: ${row.reason}`, link: '/?seccion=licencias', date: row.dateRequested })),
-      dependencies: dependencies.map((row) => ({ type: 'Dependencia', title: row.name, subtitle: row.description || '', link: '/?seccion=dependencias' })),
-      workLogs: workLogs.map((row) => ({ type: 'Parte diario', title: row.title, subtitle: row.employee.name, link: '/?seccion=parte-diario', date: row.date })),
-      comments: comments.map((row) => ({ type: 'Comentario', title: row.project.name, subtitle: row.message, link: `/?seccion=proyectos&proyecto=${row.project.id}`, date: row.createdAt })),
+      employees: employees.map((row) => {
+        const section = own ? 'perfil' : 'empleados';
+        return { type: 'Empleado', title: row.name, subtitle: row.dependency, section, entityId: row.id, link: `?seccion=${section}` };
+      }),
+      projects: projects.map((row) => ({ type: 'Proyecto', title: row.name, subtitle: row.requesterDependency, section: 'proyectos', entityId: row.id, link: `?seccion=proyectos&proyecto=${row.id}`, date: row.updatedAt })),
+      licenses: licenses.map((row) => ({ type: 'Licencia', title: row.article, subtitle: `${row.employee.name}: ${row.reason}`, section: 'licencias', entityId: row.id, link: '?seccion=licencias', date: row.dateRequested })),
+      dependencies: dependencies.map((row) => ({ type: 'Dependencia', title: row.name, subtitle: row.description || '', section: own ? 'perfil' : 'dependencias', entityId: row.id, link: `?seccion=${own ? 'perfil' : 'dependencias'}` })),
+      workLogs: workLogs.map((row) => ({ type: 'Parte diario', title: row.title, subtitle: row.employee.name, section: 'parte-diario', entityId: row.id, link: '?seccion=parte-diario', date: row.date })),
+      comments: comments.map((row) => ({ type: 'Comentario', title: row.project.name, subtitle: row.message, section: 'proyectos', entityId: row.project.id, link: `?seccion=proyectos&proyecto=${row.project.id}`, date: row.createdAt })),
     };
   }
 }
