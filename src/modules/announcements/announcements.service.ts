@@ -67,6 +67,6 @@ export class AnnouncementsService {
   private async notify(row: any) {
     if (!row.pinned && row.priority !== AnnouncementPriority.URGENT) return;
     const users = await this.prisma.user.findMany({ where: { deletedAt: null, ...(row.targetEmployeeId ? { employeeId: row.targetEmployeeId } : row.targetDependencyId ? { employee: { dependencyId: row.targetDependencyId, deletedAt: null } } : row.targetRole ? { role: row.targetRole } : {}) }, select: { id: true } });
-    await Promise.all(users.map((user) => this.prisma.notification.upsert({ where: { dedupeKey: `announcement:${row.id}:${user.id}` }, update: { title: row.title, message: row.message }, create: { userId: user.id, type: 'SYSTEM', title: row.title, message: row.message, link: '/?seccion=comunicados', dedupeKey: `announcement:${row.id}:${user.id}`, metadata: { announcementId: row.id } } })));
+    await Promise.all(users.map((user) => this.prisma.notification.upsert({ where: { dedupeKey: `announcement:${row.id}:${user.id}` }, update: { title: row.title, message: row.message }, create: { userId: user.id, type: 'SYSTEM', title: row.title, message: row.message, link: '?seccion=comunicados', dedupeKey: `announcement:${row.id}:${user.id}`, metadata: { announcementId: row.id } } })));
   }
 }
