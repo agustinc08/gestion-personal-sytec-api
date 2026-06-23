@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { mkdir, writeFile } from 'fs/promises';
@@ -77,41 +77,60 @@ export class EmployeesService {
   }
 
   async create(dto: CreateEmployeeDto, user: JwtUser) {
-    const cuil = this.cleanCuil(dto.cuil);
-    const password = dto.password || dto.cuil || 'Temporal123';
+    const name = dto.name?.trim();
+    const email = dto.email?.trim();
+    const cuil = this.cleanCuil(dto.cuil || '');
+    const password = dto.password?.trim();
+    if (!name) throw new BadRequestException('El nombre es obligatorio');
+    if (!email) throw new BadRequestException('El email es obligatorio');
+    if (!cuil) throw new BadRequestException('CUIL invalido');
+    if (!password) throw new BadRequestException('La clave provisoria es obligatoria');
+    if (!dto.dependencyId && !dto.dependency?.trim()) throw new BadRequestException('Selecciona una dependencia');
+
+    const existingByCuil = await this.prisma.employee.findFirst({ where: { cuil, deletedAt: null } })
+      || await this.prisma.user.findFirst({ where: { cuil, deletedAt: null } });
+    if (existingByCuil) throw new ConflictException('El CUIL ya existe');
+
+    const existingByEmail = await this.prisma.employee.findFirst({ where: { email, deletedAt: null } })
+      || await this.prisma.user.findFirst({ where: { email, deletedAt: null } });
+    if (existingByEmail) throw new ConflictException('El email ya existe');
+
     const dependency = dto.dependencyId
       ? await this.prisma.dependency.findFirst({ where: { id: dto.dependencyId, deletedAt: null, isActive: true } })
       : dto.dependency ? await this.prisma.dependency.findFirst({ where: { name: { equals: dto.dependency.trim(), mode: 'insensitive' }, deletedAt: null } }) : null;
-    if (dto.dependencyId && !dependency) throw new BadRequestException('Dependencia inválida o inactiva');
-    const dependencyName = dependency?.name || dto.dependency?.trim() || 'Sin dependencia';
-    const employee = await this.prisma.employee.create({
-      data: {
-        name: dto.name,
-        email: dto.email,
-        avatar: dto.avatar,
-        dependency: dependencyName,
-        dependencyId: dependency?.id,
-        position: dto.position,
-        cuil,
-        totalLicenseDays: dto.totalLicenseDays || 0,
-        strikeDutyOrder: dto.strikeDutyOrder ?? -1,
-        remoteDays: { create: (dto.remoteDaysAssigned || []).map((day) => ({ day })) },
-      },
+    if (!dependency) throw new BadRequestException('Dependencia invalida o inactiva');
+
+    const employee = await this.prisma.$transaction(async (tx) => {
+      const createdEmployee = await tx.employee.create({
+        data: {
+          name,
+          email,
+          avatar: dto.avatar,
+          dependency: dependency.name,
+          dependencyId: dependency.id,
+          position: dto.position,
+          cuil,
+          totalLicenseDays: dto.totalLicenseDays || 0,
+          strikeDutyOrder: dto.strikeDutyOrder ?? -1,
+          remoteDays: { create: (dto.remoteDaysAssigned || []).map((day) => ({ day })) },
+        },
+      });
+      await tx.user.create({
+        data: {
+          cuil,
+          email,
+          passwordHash: await bcrypt.hash(password, 10),
+          role: toRole(dto.isAdmin),
+          mustChangePassword: dto.mustChangePassword ?? true,
+          employeeId: createdEmployee.id,
+        },
+      });
+      return createdEmployee;
     });
-    await this.prisma.user.create({
-      data: {
-        cuil,
-        email: dto.email,
-        passwordHash: await bcrypt.hash(password, 10),
-        role: toRole(dto.isAdmin),
-        mustChangePassword: dto.mustChangePassword ?? true,
-        employeeId: employee.id,
-      },
-    });
+
     await this.audit.record(user, { action: 'CREATE', module: 'EMPLOYEES', entityType: 'Employee', entityId: employee.id, title: employee.name, detail: 'Empleado creado' });
     return this.findOne(employee.id, { id: '', cuil: '', email: '', role: Role.ADMIN });
   }
-
   async update(id: string, dto: UpdateEmployeeDto, user?: JwtUser) {
     const isAdmin = user?.role === Role.ADMIN;
     if (!isAdmin && user?.employeeId !== id) throw new ForbiddenException();
