@@ -21,6 +21,21 @@ const projectInclude = {
 export class ProjectsService {
   constructor(private prisma: PrismaService, private audit: AuditService) {}
 
+  private normalizeTechStack(value?: string | null) {
+    const seen = new Set<string>();
+    return (value || '')
+      .split(/[,;/|]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .filter((item) => {
+        const key = item.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .join(', ');
+  }
+
   private accessWhere(user: JwtUser) {
     return user.role === Role.ADMIN ? {} : { assignedEmployees: { some: { id: user.employeeId || '' } } };
   }
@@ -81,7 +96,7 @@ export class ProjectsService {
         repositoryApiUrl: dto.repositoryApiUrl,
         repositoryWebUrl: dto.repositoryWebUrl,
         branch: dto.branch,
-        techStack: dto.techStack,
+        techStack: this.normalizeTechStack(dto.techStack),
         notes: dto.notes,
         needsRedesign: dto.needsRedesign || false,
         needsRework: dto.needsRework || false,
@@ -125,7 +140,7 @@ export class ProjectsService {
         repositoryApiUrl: dto.repositoryApiUrl,
         repositoryWebUrl: dto.repositoryWebUrl,
         branch: dto.branch,
-        techStack: dto.techStack,
+        techStack: dto.techStack === undefined ? undefined : this.normalizeTechStack(dto.techStack),
         notes: dto.notes,
         needsRedesign: dto.needsRedesign,
         needsRework: dto.needsRework,

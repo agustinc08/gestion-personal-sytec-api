@@ -242,5 +242,7 @@ export function workLogToDto(log: any) {
     mode: fromWorkLogMode(log.mode),
     activityType: log.activityType || 'PROJECT',
     hours: log.hours ?? undefined,
+    entryTime: log.entryTime || '',
+    exitTime: log.exitTime || '',
   };
 }
