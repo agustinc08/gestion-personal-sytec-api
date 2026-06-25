@@ -56,8 +56,8 @@ export class WorkLogsService {
         mode: toWorkLogMode(dto.mode),
         activityType: toActivityType(dto.activityType),
         hours: dto.hours,
-        entryTime: dto.entryTime === undefined ? undefined : dto.entryTime || null,
-        exitTime: dto.exitTime === undefined ? undefined : dto.exitTime || null,
+        entryTime: dto.entryTime || null,
+        exitTime: dto.exitTime || null,
       },
       include: { project: true },
     });
