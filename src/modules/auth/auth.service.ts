@@ -1,4 +1,5 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,21 +13,59 @@ export class AuthService {
 
   async login(dto: LoginDto) {
     const cleanCuil = dto.cuil.replace(/\D/g, '');
-    const user = await this.prisma.user.findFirst({
-      where: {
-        cuil: cleanCuil,
-        deletedAt: null,
-        employee: { deletedAt: null },
-      },
-      include: { employee: true },
-    });
-    if (!user) { await this.audit.record(null, { action: 'LOGIN_FAILED', module: 'AUTH', entityType: 'User', title: 'Inicio de sesión fallido', detail: `CUIL no reconocido: ${cleanCuil}` }); throw new UnauthorizedException('Credenciales invalidas'); }
+    let user;
+
+    try {
+      user = await this.prisma.user.findFirst({
+        where: {
+          cuil: cleanCuil,
+          deletedAt: null,
+          employee: { deletedAt: null },
+        },
+        include: { employee: true },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2022') {
+        throw new InternalServerErrorException(
+          'La base local no coincide con el Prisma Client generado. Ejecuta pnpm prisma generate y aplica las migraciones pendientes.',
+        );
+      }
+      throw error;
+    }
+
+    if (!user) {
+      await this.audit.record(null, {
+        action: 'LOGIN_FAILED',
+        module: 'AUTH',
+        entityType: 'User',
+        title: 'Inicio de sesión fallido',
+        detail: `CUIL no reconocido: ${cleanCuil}`,
+      });
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!ok) { await this.audit.record({ id: user.id, cuil: user.cuil, email: user.email, role: user.role, employeeId: user.employeeId }, { action: 'LOGIN_FAILED', module: 'AUTH', entityType: 'User', entityId: user.id, title: 'Inicio de sesión fallido', detail: 'Contraseña incorrecta' }); throw new UnauthorizedException('Credenciales invalidas'); }
-    await this.audit.record({ id: user.id, cuil: user.cuil, email: user.email, role: user.role, employeeId: user.employeeId }, { action: 'LOGIN_SUCCESS', module: 'AUTH', entityType: 'User', entityId: user.id, title: 'Inicio de sesión exitoso' });
+    if (!ok) {
+      await this.audit.record(
+        { id: user.id, cuil: user.cuil, email: user.email, role: user.role, employeeId: user.employeeId },
+        {
+          action: 'LOGIN_FAILED',
+          module: 'AUTH',
+          entityType: 'User',
+          entityId: user.id,
+          title: 'Inicio de sesión fallido',
+          detail: 'Contraseña incorrecta',
+        },
+      );
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    await this.audit.record(
+      { id: user.id, cuil: user.cuil, email: user.email, role: user.role, employeeId: user.employeeId },
+      { action: 'LOGIN_SUCCESS', module: 'AUTH', entityType: 'User', entityId: user.id, title: 'Inicio de sesión exitoso' },
+    );
     return this.session(user);
   }
-
   async me(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
