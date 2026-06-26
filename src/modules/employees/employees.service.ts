@@ -110,7 +110,7 @@ export class EmployeesService {
           dependencyId: dependency.id,
           position: dto.position,
           cuil,
-          totalLicenseDays: dto.totalLicenseDays || 0,
+          totalLicenseDays: dto.totalLicenseDays ?? 0,
           strikeDutyOrder: dto.strikeDutyOrder ?? -1,
           remoteDays: { create: (dto.remoteDaysAssigned || []).map((day) => ({ day })) },
         },
@@ -145,7 +145,7 @@ export class EmployeesService {
       data: {
         name: dto.name,
         email: dto.email,
-        avatar: isAdmin ? dto.avatar : undefined,
+        avatar: isAdmin && dto.avatar?.trim() ? dto.avatar.trim() : undefined,
         dependency: isAdmin ? dependency?.name || dto.dependency : undefined,
         dependencyId: isAdmin ? dependency?.id : undefined,
         position: isAdmin ? dto.position : undefined,
