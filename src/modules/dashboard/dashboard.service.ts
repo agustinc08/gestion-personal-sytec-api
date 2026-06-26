@@ -120,6 +120,8 @@ export class DashboardService {
             date: log.date,
             mode: log.mode,
             title: log.title,
+            description: log.description,
+            activityType: log.activityType,
             hours: log.hours,
             entryTime: log.entryTime,
             exitTime: log.exitTime,
