@@ -144,6 +144,7 @@ model Employee {
   user             User?
   remoteDays       RemoteDay[]
   workLogs         WorkLog[]
+  dailyAttendances DailyAttendance[]
   licenseRequests  LicenseRequest[]
   assignedProjects Project[]        @relation("ProjectAssignees")
   ownedProjects    Project[]        @relation("ProjectOwner")
@@ -356,6 +357,20 @@ model WorkLog {
   @@index([mode])
 }
 
+
+model DailyAttendance {
+  id         String   @id @default(cuid())
+  employeeId String
+  date       DateTime
+  entryTime  String?
+  exitTime   String?
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([employeeId, date])
+  @@index([date])
+}
 model LicenseRequest {
   id              String          @id @default(cuid())
   legacyId        String?         @unique

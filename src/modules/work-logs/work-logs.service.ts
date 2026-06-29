@@ -1,10 +1,11 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { toActivityType, toDate, toWorkLogMode, workLogToDto } from '../../shared/mappers';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkLogDto } from './dto/create-work-log.dto';
 import { UpdateWorkLogDto } from './dto/update-work-log.dto';
+import { SaveDailyAttendanceDto } from './dto/save-daily-attendance.dto';
 import { AuditService } from '../audit/audit.service';
 
 @Injectable()
@@ -44,8 +45,6 @@ export class WorkLogsService {
     if (!employeeId) throw new ForbiddenException();
     const date = toDate(dto.date)!;
     this.validateTimes(dto.entryTime, dto.exitTime);
-    const existing = await this.prisma.workLog.findFirst({ where: { employeeId, date, deletedAt: null }, select: { id: true } });
-    if (existing) throw new ConflictException({ message: 'Ya existe un parte diario para este empleado y fecha', workLogId: existing.id });
     const created = await this.prisma.workLog.create({
       data: {
         employeeId,
@@ -69,10 +68,6 @@ export class WorkLogsService {
     if (!current) throw new NotFoundException();
     if (user.role !== Role.ADMIN && current.employeeId !== user.employeeId) throw new ForbiddenException();
     const date = dto.date ? toDate(dto.date)! : current.date;
-    if (date.getTime() !== current.date.getTime()) {
-      const duplicate = await this.prisma.workLog.findFirst({ where: { employeeId: current.employeeId, date, deletedAt: null, id: { not: id } }, select: { id: true } });
-      if (duplicate) throw new ConflictException('Ya existe otro parte diario para este empleado y fecha');
-    }
     const nextEntryTime = dto.entryTime === undefined ? current.entryTime || undefined : dto.entryTime || undefined;
     const nextExitTime = dto.exitTime === undefined ? current.exitTime || undefined : dto.exitTime || undefined;
     this.validateTimes(nextEntryTime, nextExitTime);
@@ -93,6 +88,45 @@ export class WorkLogsService {
     });
     await this.audit.record(user, { action: 'UPDATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: updated.title, detail: 'Parte diario editado' });
     return workLogToDto(updated);
+  }
+  private attendanceToDto(row: any) {
+    return {
+      id: row.id,
+      employeeId: row.employeeId,
+      date: row.date.toISOString().slice(0, 10),
+      entryTime: row.entryTime || '',
+      exitTime: row.exitTime || '',
+      updatedAt: row.updatedAt?.toISOString?.() || '',
+    };
+  }
+
+  async findAttendances(query: Record<string, string> = {}, user: JwtUser) {
+    const where: any = {};
+    if (user.role !== Role.ADMIN) where.employeeId = user.employeeId;
+    else if (query.employeeId) where.employeeId = query.employeeId;
+    if (query.date) where.date = toDate(query.date);
+    if (query.year) {
+      const year = Number(query.year);
+      const month = query.month ? Number(query.month) - 1 : 0;
+      const from = new Date(year, month, 1);
+      const to = query.month ? new Date(year, month + 1, 0, 23, 59, 59, 999) : new Date(year, 11, 31, 23, 59, 59, 999);
+      where.date = { gte: from, lte: to };
+    }
+    return (await this.prisma.dailyAttendance.findMany({ where, orderBy: { date: 'desc' } })).map((row) => this.attendanceToDto(row));
+  }
+
+  async saveAttendance(dto: SaveDailyAttendanceDto, user: JwtUser) {
+    const employeeId = user.role === Role.ADMIN && dto.employeeId ? dto.employeeId : user.employeeId;
+    if (!employeeId) throw new ForbiddenException();
+    this.validateTimes(dto.entryTime, dto.exitTime);
+    const date = toDate(dto.date)!;
+    const saved = await this.prisma.dailyAttendance.upsert({
+      where: { employeeId_date: { employeeId, date } },
+      update: { entryTime: dto.entryTime || null, exitTime: dto.exitTime || null },
+      create: { employeeId, date, entryTime: dto.entryTime || null, exitTime: dto.exitTime || null },
+    });
+    await this.audit.record(user, { action: 'UPSERT_ATTENDANCE', module: 'WORK_LOGS', entityType: 'DailyAttendance', entityId: saved.id, title: 'Horario de jornada actualizado' });
+    return this.attendanceToDto(saved);
   }
   async remove(id: string, user: JwtUser) {
     const current = await this.prisma.workLog.findUnique({ where: { id } });

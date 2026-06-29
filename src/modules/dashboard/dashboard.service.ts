@@ -98,6 +98,10 @@ export class DashboardService {
             orderBy: [{ date: 'desc' }, { updatedAt: 'desc' }],
             take: 1,
           },
+          dailyAttendances: {
+            orderBy: [{ date: 'desc' }, { updatedAt: 'desc' }],
+            take: 7,
+          },
         },
         orderBy: { name: 'asc' },
       }),
@@ -111,6 +115,17 @@ export class DashboardService {
       technologies: [...technologyCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => ({ name, count })),
       latestWorkLogsByEmployee: employeesWithLatestLogs.map((employee) => {
         const log = employee.workLogs[0];
+        const attendance = log
+          ? employee.dailyAttendances.find((row) => row.date.getTime() === log.date.getTime()) || employee.dailyAttendances[0]
+          : employee.dailyAttendances[0];
+        const attendanceDto = attendance ? {
+          id: attendance.id,
+          employeeId: attendance.employeeId,
+          date: attendance.date,
+          entryTime: attendance.entryTime,
+          exitTime: attendance.exitTime,
+          updatedAt: attendance.updatedAt,
+        } : null;
         return {
           employeeId: employee.id,
           employeeName: employee.name,
@@ -128,7 +143,9 @@ export class DashboardService {
             projectId: log.projectId,
             projectName: log.project?.name || '',
             projectTechStack: log.project?.techStack || '',
+            attendance: attendanceDto,
           } : null,
+          attendance: attendanceDto,
         };
       }),
       recentAudit: recentAudit.map((row) => ({ id: row.id, action: row.action, module: row.module, title: row.title, detail: row.detail, employeeName: row.employee?.name, createdAt: row.createdAt })),
