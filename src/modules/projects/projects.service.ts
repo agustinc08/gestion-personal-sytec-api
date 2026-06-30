@@ -14,7 +14,9 @@ const projectInclude = {
   assignedEmployees: true,
   owner: true,
   updates: { orderBy: { createdAt: 'asc' as const } },
-  deployments: { orderBy: { deployedAt: 'desc' as const }, include: { deployedBy: { include: { employee: true } } } },
+  workLogs: { where: { deletedAt: null }, orderBy: [{ updatedAt: 'desc' as const }, { createdAt: 'desc' as const }, { date: 'desc' as const }], take: 1 },
+  comments: { where: { deletedAt: null }, orderBy: [{ updatedAt: 'desc' as const }, { createdAt: 'desc' as const }], take: 1 },
+  deployments: { orderBy: [{ updatedAt: 'desc' as const }, { deployedAt: 'desc' as const }, { createdAt: 'desc' as const }], include: { deployedBy: { include: { employee: true } } } },
 };
 
 @Injectable()
