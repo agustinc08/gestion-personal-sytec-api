@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { toActivityType, toDate, toWorkLogMode, workLogToDto } from '../../shared/mappers';
+import { dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, monthRangeArgentina } from '../../shared/date-utils';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkLogDto } from './dto/create-work-log.dto';
@@ -25,11 +26,8 @@ export class WorkLogsService {
     if (query.activityType) where.activityType = toActivityType(query.activityType);
     if (query.mode) where.mode = toWorkLogMode(query.mode);
     if (query.year) {
-      const year = Number(query.year);
-      const month = query.month ? Number(query.month) - 1 : 0;
-      const from = new Date(year, month, 1);
-      const to = query.month ? new Date(year, month + 1, 0, 23, 59, 59, 999) : new Date(year, 11, 31, 23, 59, 59, 999);
-      where.date = { gte: from, lte: to };
+      const { start, end } = monthRangeArgentina(query.year, query.month);
+      where.date = { gte: start, lt: end };
     }
     return where;
   }
@@ -93,7 +91,7 @@ export class WorkLogsService {
     return {
       id: row.id,
       employeeId: row.employeeId,
-      date: row.date.toISOString().slice(0, 10),
+      date: formatDateOnlyArgentina(row.date),
       entryTime: row.entryTime || '',
       exitTime: row.exitTime || '',
       updatedAt: row.updatedAt?.toISOString?.() || '',
@@ -104,13 +102,13 @@ export class WorkLogsService {
     const where: any = {};
     if (user.role !== Role.ADMIN) where.employeeId = user.employeeId;
     else if (query.employeeId) where.employeeId = query.employeeId;
-    if (query.date) where.date = toDate(query.date);
+    if (query.date) {
+      const { start, end } = dateOnlyToArgentinaDayRange(query.date);
+      where.date = { gte: start, lt: end };
+    }
     if (query.year) {
-      const year = Number(query.year);
-      const month = query.month ? Number(query.month) - 1 : 0;
-      const from = new Date(year, month, 1);
-      const to = query.month ? new Date(year, month + 1, 0, 23, 59, 59, 999) : new Date(year, 11, 31, 23, 59, 59, 999);
-      where.date = { gte: from, lte: to };
+      const { start, end } = monthRangeArgentina(query.year, query.month);
+      where.date = { gte: start, lt: end };
     }
     return (await this.prisma.dailyAttendance.findMany({ where, orderBy: { date: 'desc' } })).map((row) => this.attendanceToDto(row));
   }
@@ -120,11 +118,11 @@ export class WorkLogsService {
     if (!employeeId) throw new ForbiddenException();
     this.validateTimes(dto.entryTime, dto.exitTime);
     const date = toDate(dto.date)!;
-    const saved = await this.prisma.dailyAttendance.upsert({
-      where: { employeeId_date: { employeeId, date } },
-      update: { entryTime: dto.entryTime || null, exitTime: dto.exitTime || null },
-      create: { employeeId, date, entryTime: dto.entryTime || null, exitTime: dto.exitTime || null },
-    });
+    const { start, end } = dateOnlyToArgentinaDayRange(dto.date);
+    const existing = await this.prisma.dailyAttendance.findFirst({ where: { employeeId, date: { gte: start, lt: end } } });
+    const saved = existing
+      ? await this.prisma.dailyAttendance.update({ where: { id: existing.id }, data: { entryTime: dto.entryTime || null, exitTime: dto.exitTime || null } })
+      : await this.prisma.dailyAttendance.create({ data: { employeeId, date, entryTime: dto.entryTime || null, exitTime: dto.exitTime || null } });
     await this.audit.record(user, { action: 'UPSERT_ATTENDANCE', module: 'WORK_LOGS', entityType: 'DailyAttendance', entityId: saved.id, title: 'Horario de jornada actualizado' });
     return this.attendanceToDto(saved);
   }

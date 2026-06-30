@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { LicenseStatus, Prisma, Role } from '@prisma/client';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
+import { addDays, dateOnlyToArgentinaDate, formatDateOnlyArgentina, getArgentinaTodayDateOnly } from '../../shared/date-utils';
 
 type Notice = { type: string; title: string; message: string; link?: string; key: string; metadata?: Prisma.InputJsonValue };
 
@@ -9,12 +10,12 @@ type Notice = { type: string; title: string; message: string; link?: string; key
 export class NotificationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private day(value = new Date()) {
-    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  private day(value?: Date | string | null) {
+    return dateOnlyToArgentinaDate(value || getArgentinaTodayDateOnly())!;
   }
 
-  private dateKey(value: Date) {
-    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  private dateKey(value: Date | string) {
+    return formatDateOnlyArgentina(value);
   }
 
   private audience(user: JwtUser) {
@@ -31,7 +32,7 @@ export class NotificationsService {
 
   private async refresh(user: JwtUser) {
     const today = this.day();
-    const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+    const tomorrow = addDays(today, 1);
     const todayKey = this.dateKey(today);
     const notices: Notice[] = [];
 

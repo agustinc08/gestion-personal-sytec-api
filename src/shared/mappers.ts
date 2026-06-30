@@ -1,4 +1,5 @@
 import { ActivityType, LicenseStatus, ProjectDifficulty, ProjectStatus, Role, WorkLogMode } from '@prisma/client';
+import { dateOnlyToArgentinaDate, formatDateOnlyArgentina } from './date-utils';
 
 export const toRole = (isAdmin?: boolean) => (isAdmin ? Role.ADMIN : Role.EMPLOYEE);
 
@@ -101,13 +102,11 @@ export function toActivityType(activityType?: string) {
 }
 
 export function dateOnly(date?: Date | string | null) {
-  if (!date) return '';
-  return new Date(date).toISOString().slice(0, 10);
+  return formatDateOnlyArgentina(date);
 }
 
 export function toDate(value?: string | Date | null) {
-  if (!value) return undefined;
-  return new Date(`${String(value).slice(0, 10)}T00:00:00.000Z`);
+  return dateOnlyToArgentinaDate(value);
 }
 
 export function employeeToDto(employee: any) {
@@ -140,10 +139,13 @@ export function projectToDto(project: any) {
   const updates = project.updates || [];
   const deployments = project.deployments || [];
   const lastProgress = updates.length > 0 ? updates[updates.length - 1] : null;
+  const workLogs = project.workLogs || [];
+  const comments = project.comments || [];
   const lastDeploy = deployments.length > 0 ? deployments[0] : null;
+  const activityDates = [project.updatedAt, project.createdAt, ...updates.map((row: any) => row.createdAt), ...workLogs.map((row: any) => row.updatedAt || row.createdAt || row.date), ...deployments.map((row: any) => row.updatedAt || row.deployedAt || row.createdAt), ...comments.map((row: any) => row.updatedAt || row.createdAt)].filter(Boolean).map((value: any) => new Date(value));
+  const lastActivityAt = activityDates.sort((a: Date, b: Date) => b.getTime() - a.getTime())[0] || project.updatedAt || project.createdAt;
   const deadline = project.deadline ? new Date(project.deadline) : null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = dateOnlyToArgentinaDate(formatDateOnlyArgentina(new Date()))!;
   const in7 = new Date(today.getTime() + 7 * 86400000);
   const in15 = new Date(today.getTime() + 15 * 86400000);
   const deadlineStatus = !deadline
@@ -180,6 +182,7 @@ export function projectToDto(project: any) {
     lastDeployDate: lastDeploy ? new Date(lastDeploy.deployedAt).toISOString() : '',
     deadlineStatus,
     updatedAt: project.updatedAt ? new Date(project.updatedAt).toISOString() : '',
+    lastActivityAt: lastActivityAt ? new Date(lastActivityAt).toISOString() : '',
     updates: updates.map((u: any) => ({
       id: u.id,
       authorName: u.authorName,

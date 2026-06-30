@@ -70,7 +70,7 @@ export class ProjectsService {
       include: projectInclude,
       orderBy: [{ year: 'desc' }, { updatedAt: 'desc' }],
     });
-    return projects.map(projectToDto);
+    return projects.map(projectToDto).sort((a: any, b: any) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
   }
 
   async findOne(id: string, user: JwtUser) {

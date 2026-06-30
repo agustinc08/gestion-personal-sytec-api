@@ -1,15 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { ProjectStatus } from '@prisma/client';
+import { addDays, dateOnlyToArgentinaDate, dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina } from '../../shared/date-utils';
+import { fromWorkLogMode } from '../../shared/mappers';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class DashboardService {
   constructor(private prisma: PrismaService) {}
   async admin() {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const in7 = new Date(today.getTime() + 7 * 86400000);
-    const in15 = new Date(today.getTime() + 15 * 86400000);
+    const today = dateOnlyToArgentinaDate(getArgentinaTodayDateOnly())!;
+    const in7 = addDays(today, 7);
+    const in15 = addDays(today, 15);
     const [
       employees,
       projects,
@@ -68,10 +69,11 @@ export class DashboardService {
     };
   }
   async adminSummary() {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today.getTime() + 86400000);
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    const alertLimit = new Date(today.getTime() + 15 * 86400000);
+    const todayKey = getArgentinaTodayDateOnly();
+    const { start: today, end: tomorrow } = dateOnlyToArgentinaDayRange(todayKey);
+    const [summaryYear, summaryMonth] = todayKey.split('-').map(Number);
+    const monthStart = monthRangeArgentina(summaryYear, summaryMonth).start;
+    const alertLimit = addDays(today, 15);
     const [employeesActive, dependenciesActive, workLogsToday, expectedEmployees, pendingLicenses, approvedLicensesMonth, activeProjects, overdueProjects, upcomingProjects, strike, recentAudit, stackRows, employeesWithLatestLogs] = await Promise.all([
       this.prisma.employee.count({ where: { deletedAt: null } }),
       this.prisma.dependency.count({ where: { deletedAt: null, isActive: true } }),
@@ -115,13 +117,14 @@ export class DashboardService {
       technologies: [...technologyCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => ({ name, count })),
       latestWorkLogsByEmployee: employeesWithLatestLogs.map((employee) => {
         const log = employee.workLogs[0];
+        const logDate = log ? formatDateOnlyArgentina(log.date) : '';
         const attendance = log
-          ? employee.dailyAttendances.find((row) => row.date.getTime() === log.date.getTime()) || employee.dailyAttendances[0]
+          ? employee.dailyAttendances.find((row) => formatDateOnlyArgentina(row.date) === logDate) || employee.dailyAttendances[0]
           : employee.dailyAttendances[0];
         const attendanceDto = attendance ? {
           id: attendance.id,
           employeeId: attendance.employeeId,
-          date: attendance.date,
+          date: formatDateOnlyArgentina(attendance.date),
           entryTime: attendance.entryTime,
           exitTime: attendance.exitTime,
           updatedAt: attendance.updatedAt,
@@ -132,7 +135,7 @@ export class DashboardService {
           dependency: employee.dependencyRef?.name || employee.dependency,
           workLog: log ? {
             id: log.id,
-            date: log.date,
+            date: formatDateOnlyArgentina(log.date),
             mode: log.mode,
             title: log.title,
             description: log.description,
@@ -173,4 +176,55 @@ export class DashboardService {
       })),
     };
   }
+  async adminWorklogCalendar(query: Record<string, string>) {
+    const { start, end, year, month } = monthRangeArgentina(query.year, query.month);
+    const [logs, attendances, employees] = await Promise.all([
+      this.prisma.workLog.findMany({
+        where: { deletedAt: null, date: { gte: start, lt: end } },
+        include: { employee: { include: { dependencyRef: true } }, project: { select: { id: true, name: true } } },
+        orderBy: [{ date: 'asc' }, { updatedAt: 'desc' }],
+      }),
+      this.prisma.dailyAttendance.findMany({
+        where: { date: { gte: start, lt: end } },
+        include: { employee: { include: { dependencyRef: true } } },
+        orderBy: [{ date: 'asc' }, { updatedAt: 'desc' }],
+      }),
+      this.prisma.employee.findMany({
+        where: { deletedAt: null, user: { is: { role: 'EMPLOYEE', deletedAt: null } } },
+        include: { dependencyRef: true },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+    const attendanceByEmployeeDate = new Map(attendances.map((row) => [row.employeeId + ':' + formatDateOnlyArgentina(row.date), row]));
+    const employeesWithLogs = new Set(logs.map((row) => row.employeeId));
+    return {
+      year,
+      month,
+      items: logs.map((log) => {
+        const date = formatDateOnlyArgentina(log.date);
+        const attendance = attendanceByEmployeeDate.get(log.employeeId + ':' + date);
+        return {
+          id: log.id,
+          date,
+          employeeId: log.employeeId,
+          employeeName: log.employee?.name || '',
+          dependency: log.employee?.dependencyRef?.name || log.employee?.dependency || '',
+          mode: fromWorkLogMode(log.mode),
+          activityType: log.activityType || 'PROJECT',
+          title: log.title,
+          description: log.description,
+          hours: log.hours,
+          projectId: log.projectId || '',
+          projectName: log.project?.name || '',
+          attendance: attendance ? { entryTime: attendance.entryTime || '', exitTime: attendance.exitTime || '' } : null,
+        };
+      }),
+      employeesWithoutLogs: employees.filter((employee) => !employeesWithLogs.has(employee.id)).map((employee) => ({
+        employeeId: employee.id,
+        employeeName: employee.name,
+        dependency: employee.dependencyRef?.name || employee.dependency || '',
+      })),
+    };
+  }
+
 }
