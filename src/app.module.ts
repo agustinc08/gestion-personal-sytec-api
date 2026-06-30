@@ -18,6 +18,7 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { SearchModule } from './modules/search/search.module';
 import { ExportsModule } from './modules/exports/exports.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
+import { SecondaryWorkItemsModule } from './modules/secondary-work-items/secondary-work-items.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { AnnouncementsModule } from './modules/announcements/announcements.modul
     SearchModule,
     ExportsModule,
     AnnouncementsModule,
+    SecondaryWorkItemsModule,
   ],
   controllers: [HealthController],
 })

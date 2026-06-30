@@ -88,6 +88,11 @@ enum WorkLogStatus {
   REJECTED
 }
 
+enum SecondaryWorkItemStatus {
+  ACTIVE
+  ARCHIVED
+}
+
 enum AnnouncementType {
   GENERAL
   STRIKE
@@ -105,56 +110,57 @@ enum AnnouncementPriority {
 }
 
 model User {
-  id                 String           @id @default(cuid())
-  cuil               String           @unique
-  email              String?          @unique
-  passwordHash       String
-  role               Role             @default(EMPLOYEE)
-  mustChangePassword Boolean          @default(true)
-  employeeId         String?          @unique
-  legacyId           String?          @unique
-  employee           Employee?        @relation(fields: [employeeId], references: [id])
-  auditLogs          AuditLog[]
-  deployments        Deployment[]
-  notifications      Notification[]
-  projectComments    ProjectComment[]
-  createdAnnouncements Announcement[] @relation("AnnouncementCreator")
-  announcementReads  AnnouncementRead[]
-  createdAt          DateTime         @default(now())
-  updatedAt          DateTime         @updatedAt
-  deletedAt          DateTime?
+  id                   String             @id @default(cuid())
+  cuil                 String             @unique
+  email                String?            @unique
+  passwordHash         String
+  role                 Role               @default(EMPLOYEE)
+  mustChangePassword   Boolean            @default(true)
+  employeeId           String?            @unique
+  legacyId             String?            @unique
+  employee             Employee?          @relation(fields: [employeeId], references: [id])
+  auditLogs            AuditLog[]
+  deployments          Deployment[]
+  notifications        Notification[]
+  projectComments      ProjectComment[]
+  createdAnnouncements Announcement[]     @relation("AnnouncementCreator")
+  announcementReads    AnnouncementRead[]
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  deletedAt            DateTime?
 
   @@index([role])
 }
 
 model Employee {
-  id               String           @id @default(cuid())
-  legacyId         String?          @unique
-  name             String
-  email            String?          @unique
-  avatar           String?
-  dependency       String
-  dependencyId     String?
-  dependencyRef    Dependency?      @relation(fields: [dependencyId], references: [id], onDelete: SetNull)
-  position         String?
-  cuil             String           @unique
-  totalLicenseDays Int              @default(0)
-  compensatoryDays Int              @default(0)
-  strikeDutyOrder  Int              @default(-1)
-  user             User?
-  remoteDays       RemoteDay[]
-  workLogs         WorkLog[]
-  dailyAttendances DailyAttendance[]
-  licenseRequests  LicenseRequest[]
-  assignedProjects Project[]        @relation("ProjectAssignees")
-  ownedProjects    Project[]        @relation("ProjectOwner")
-  authoredUpdates  ProjectUpdate[]
-  notifications    Notification[]
-  auditLogs        AuditLog[]
+  id                    String              @id @default(cuid())
+  legacyId              String?             @unique
+  name                  String
+  email                 String?             @unique
+  avatar                String?
+  dependency            String
+  dependencyId          String?
+  dependencyRef         Dependency?         @relation(fields: [dependencyId], references: [id], onDelete: SetNull)
+  position              String?
+  cuil                  String              @unique
+  totalLicenseDays      Int                 @default(0)
+  compensatoryDays      Int                 @default(0)
+  strikeDutyOrder       Int                 @default(-1)
+  user                  User?
+  remoteDays            RemoteDay[]
+  workLogs              WorkLog[]
+  secondaryWorkItems    SecondaryWorkItem[]
+  dailyAttendances      DailyAttendance[]
+  licenseRequests       LicenseRequest[]
+  assignedProjects      Project[]           @relation("ProjectAssignees")
+  ownedProjects         Project[]           @relation("ProjectOwner")
+  authoredUpdates       ProjectUpdate[]
+  notifications         Notification[]
+  auditLogs             AuditLog[]
   targetedAnnouncements Announcement[]
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  deletedAt        DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  deletedAt             DateTime?
 
   @@index([dependency])
   @@index([dependencyId])
@@ -162,15 +168,15 @@ model Employee {
 }
 
 model Dependency {
-  id          String     @id @default(cuid())
-  name        String     @unique
-  description String?
-  isActive    Boolean    @default(true)
-  employees   Employee[]
+  id            String         @id @default(cuid())
+  name          String         @unique
+  description   String?
+  isActive      Boolean        @default(true)
+  employees     Employee[]
   announcements Announcement[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  deletedAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  deletedAt     DateTime?
 
   @@index([isActive, deletedAt])
 }
@@ -187,7 +193,7 @@ model Announcement {
   startsAt           DateTime?
   endsAt             DateTime?
   pinned             Boolean              @default(false)
-  isActive            Boolean              @default(true)
+  isActive           Boolean              @default(true)
   createdByUserId    String
   createdBy          User                 @relation("AnnouncementCreator", fields: [createdByUserId], references: [id])
   targetDependency   Dependency?          @relation(fields: [targetDependencyId], references: [id], onDelete: SetNull)
@@ -248,6 +254,24 @@ model Project {
   @@index([difficulty])
   @@index([deadline])
   @@index([ownerId])
+}
+
+model SecondaryWorkItem {
+  id             String                  @id @default(cuid())
+  name           String
+  normalizedName String                  @unique
+  description    String?
+  status         SecondaryWorkItemStatus @default(ACTIVE)
+  createdById    String?
+  firstSeenAt    DateTime                @default(now())
+  lastActivityAt DateTime                @default(now())
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  createdBy      Employee?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  workLogs       WorkLog[]
+
+  @@index([status, lastActivityAt])
+  @@index([createdById])
 }
 
 model Notification {
@@ -332,31 +356,33 @@ model ProjectUpdate {
 }
 
 model WorkLog {
-  id           String        @id @default(cuid())
-  legacyId     String?       @unique
-  employeeId   String
-  projectId    String?
-  title        String
-  description  String
-  date         DateTime
-  mode         WorkLogMode
-  activityType ActivityType  @default(PROJECT)
-  hours        Float?
-  entryTime    String?
-  exitTime     String?
-  status       WorkLogStatus @default(SUBMITTED)
-  employee     Employee      @relation(fields: [employeeId], references: [id])
-  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  deletedAt    DateTime?
+  id                  String             @id @default(cuid())
+  legacyId            String?            @unique
+  employeeId          String
+  projectId           String?
+  secondaryWorkItemId String?
+  title               String
+  description         String
+  date                DateTime
+  mode                WorkLogMode
+  activityType        ActivityType       @default(PROJECT)
+  hours               Float?
+  entryTime           String?
+  exitTime            String?
+  status              WorkLogStatus      @default(SUBMITTED)
+  employee            Employee           @relation(fields: [employeeId], references: [id])
+  project             Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  secondaryWorkItem   SecondaryWorkItem? @relation(fields: [secondaryWorkItemId], references: [id], onDelete: SetNull)
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  deletedAt           DateTime?
 
   @@index([employeeId, date])
   @@index([projectId])
+  @@index([secondaryWorkItemId])
   @@index([activityType])
   @@index([mode])
 }
-
 
 model DailyAttendance {
   id         String   @id @default(cuid())
@@ -371,6 +397,7 @@ model DailyAttendance {
   @@unique([employeeId, date])
   @@index([date])
 }
+
 model LicenseRequest {
   id              String          @id @default(cuid())
   legacyId        String?         @unique

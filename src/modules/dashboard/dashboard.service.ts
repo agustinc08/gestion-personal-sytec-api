@@ -96,7 +96,7 @@ export class DashboardService {
           dependencyRef: { select: { name: true } },
           workLogs: {
             where: { deletedAt: null },
-            include: { project: { select: { id: true, name: true, techStack: true } } },
+            include: { project: { select: { id: true, name: true, techStack: true } }, secondaryWorkItem: { select: { id: true, name: true } } },
             orderBy: [{ date: 'desc' }, { updatedAt: 'desc' }],
             take: 1,
           },
@@ -145,6 +145,9 @@ export class DashboardService {
             exitTime: log.exitTime,
             projectId: log.projectId,
             projectName: log.project?.name || '',
+            secondaryWorkItemId: log.secondaryWorkItemId || '',
+            secondaryWorkItemName: log.secondaryWorkItem?.name || '',
+            workItemType: log.projectId ? 'PROJECT' : (log.secondaryWorkItemId ? 'SECONDARY' : 'FREE_TEXT'),
             projectTechStack: log.project?.techStack || '',
             attendance: attendanceDto,
           } : null,
@@ -181,7 +184,7 @@ export class DashboardService {
     const [logs, attendances, employees] = await Promise.all([
       this.prisma.workLog.findMany({
         where: { deletedAt: null, date: { gte: start, lt: end } },
-        include: { employee: { include: { dependencyRef: true } }, project: { select: { id: true, name: true } } },
+        include: { employee: { include: { dependencyRef: true } }, project: { select: { id: true, name: true } }, secondaryWorkItem: { select: { id: true, name: true } } },
         orderBy: [{ date: 'asc' }, { updatedAt: 'desc' }],
       }),
       this.prisma.dailyAttendance.findMany({
@@ -216,6 +219,9 @@ export class DashboardService {
           hours: log.hours,
           projectId: log.projectId || '',
           projectName: log.project?.name || '',
+          secondaryWorkItemId: log.secondaryWorkItemId || '',
+          secondaryWorkItemName: log.secondaryWorkItem?.name || '',
+          workItemType: log.projectId ? 'PROJECT' : (log.secondaryWorkItemId ? 'SECONDARY' : 'FREE_TEXT'),
           attendance: attendance ? { entryTime: attendance.entryTime || '', exitTime: attendance.exitTime || '' } : null,
         };
       }),

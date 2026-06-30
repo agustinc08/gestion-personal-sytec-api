@@ -5,6 +5,10 @@ import { IsDateString, IsEnum, IsNumber, IsOptional, IsString, Matches } from 'c
 export class CreateWorkLogDto {
   @IsOptional() @IsString() employeeId?: string;
   @IsOptional() @IsString() projectId?: string;
+  @Transform(({ value }) => (value === '' || value === null ? undefined : value))
+  @IsOptional() @IsString() secondaryWorkItemId?: string;
+  @Transform(({ value }) => (value === '' || value === null ? undefined : value))
+  @IsOptional() @IsString() secondaryWorkItemName?: string;
   @IsString() title!: string;
   @IsString() description!: string;
   @IsDateString() date!: string;

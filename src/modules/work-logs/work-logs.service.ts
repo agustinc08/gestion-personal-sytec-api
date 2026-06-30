@@ -8,10 +8,11 @@ import { CreateWorkLogDto } from './dto/create-work-log.dto';
 import { UpdateWorkLogDto } from './dto/update-work-log.dto';
 import { SaveDailyAttendanceDto } from './dto/save-daily-attendance.dto';
 import { AuditService } from '../audit/audit.service';
+import { SecondaryWorkItemsService } from '../secondary-work-items/secondary-work-items.service';
 
 @Injectable()
 export class WorkLogsService {
-  constructor(private prisma: PrismaService, private audit: AuditService) {}
+  constructor(private prisma: PrismaService, private audit: AuditService, private secondaryWorkItems: SecondaryWorkItemsService) {}
 
   private validateTimes(entryTime?: string, exitTime?: string) {
     if (entryTime && exitTime && exitTime < entryTime) {
@@ -23,6 +24,7 @@ export class WorkLogsService {
     const where: any = { deletedAt: null };
     if (employeeId || query.employeeId) where.employeeId = employeeId || query.employeeId;
     if (query.projectId) where.projectId = query.projectId;
+    if (query.secondaryWorkItemId) where.secondaryWorkItemId = query.secondaryWorkItemId;
     if (query.activityType) where.activityType = toActivityType(query.activityType);
     if (query.mode) where.mode = toWorkLogMode(query.mode);
     if (query.year) {
@@ -33,20 +35,30 @@ export class WorkLogsService {
   }
 
   async findAll(query: Record<string, string> = {}) {
-    return (await this.prisma.workLog.findMany({ where: this.where(query), include: { project: true }, orderBy: { date: 'desc' } })).map(workLogToDto);
+    return (await this.prisma.workLog.findMany({ where: this.where(query), include: { project: true, secondaryWorkItem: true }, orderBy: { date: 'desc' } })).map(workLogToDto);
   }
   async findMine(user: JwtUser, query: Record<string, string> = {}) {
-    return (await this.prisma.workLog.findMany({ where: this.where(query, user.employeeId || ''), include: { project: true }, orderBy: { date: 'desc' } })).map(workLogToDto);
+    return (await this.prisma.workLog.findMany({ where: this.where(query, user.employeeId || ''), include: { project: true, secondaryWorkItem: true }, orderBy: { date: 'desc' } })).map(workLogToDto);
   }
+  private async resolveSecondaryWorkItem(dto: { projectId?: string; secondaryWorkItemId?: string; secondaryWorkItemName?: string; title?: string }, employeeId?: string | null) {
+    if (dto.projectId) return null;
+    if (dto.secondaryWorkItemId) return { id: dto.secondaryWorkItemId };
+    const name = dto.secondaryWorkItemName || dto.title;
+    if (!name?.trim()) return null;
+    return this.secondaryWorkItems.findOrCreateByName(name, employeeId);
+  }
+
   async create(dto: CreateWorkLogDto, user: JwtUser) {
     const employeeId = user.role === Role.ADMIN && dto.employeeId ? dto.employeeId : user.employeeId;
     if (!employeeId) throw new ForbiddenException();
     const date = toDate(dto.date)!;
     this.validateTimes(dto.entryTime, dto.exitTime);
+    const secondaryWorkItem = await this.resolveSecondaryWorkItem(dto, employeeId);
     const created = await this.prisma.workLog.create({
       data: {
         employeeId,
         projectId: dto.projectId || null,
+        secondaryWorkItemId: dto.projectId ? null : secondaryWorkItem?.id || null,
         title: dto.title,
         description: dto.description,
         date,
@@ -56,8 +68,9 @@ export class WorkLogsService {
         entryTime: dto.entryTime || null,
         exitTime: dto.exitTime || null,
       },
-      include: { project: true },
+      include: { project: true, secondaryWorkItem: true },
     });
+    if (created.secondaryWorkItemId) await this.secondaryWorkItems.touch(created.secondaryWorkItemId, created.updatedAt || created.date);
     await this.audit.record(user, { action: 'CREATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: created.id, title: created.title, detail: 'Parte diario creado' });
     return workLogToDto(created);
   }
@@ -69,10 +82,14 @@ export class WorkLogsService {
     const nextEntryTime = dto.entryTime === undefined ? current.entryTime || undefined : dto.entryTime || undefined;
     const nextExitTime = dto.exitTime === undefined ? current.exitTime || undefined : dto.exitTime || undefined;
     this.validateTimes(nextEntryTime, nextExitTime);
+    const nextProjectId = dto.projectId === undefined ? current.projectId : dto.projectId || null;
+    const secondaryWorkItem = nextProjectId ? null : await this.resolveSecondaryWorkItem({ ...dto, projectId: nextProjectId || undefined, title: dto.title || current.title }, current.employeeId);
+    const nextSecondaryWorkItemId = nextProjectId ? null : (secondaryWorkItem?.id ?? (dto.secondaryWorkItemId === '' ? null : dto.secondaryWorkItemId ?? current.secondaryWorkItemId));
     const updated = await this.prisma.workLog.update({
       where: { id },
       data: {
-        projectId: dto.projectId === '' ? null : dto.projectId,
+        projectId: nextProjectId,
+        secondaryWorkItemId: nextSecondaryWorkItemId,
         title: dto.title,
         description: dto.description,
         date,
@@ -82,8 +99,9 @@ export class WorkLogsService {
         entryTime: dto.entryTime === undefined ? undefined : dto.entryTime || null,
         exitTime: dto.exitTime === undefined ? undefined : dto.exitTime || null,
       },
-      include: { project: true },
+      include: { project: true, secondaryWorkItem: true },
     });
+    if (updated.secondaryWorkItemId) await this.secondaryWorkItems.touch(updated.secondaryWorkItemId, updated.updatedAt || updated.date);
     await this.audit.record(user, { action: 'UPDATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: updated.title, detail: 'Parte diario editado' });
     return workLogToDto(updated);
   }
