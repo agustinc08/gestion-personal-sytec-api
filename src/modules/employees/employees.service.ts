@@ -1,5 +1,5 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { LicenseStatus, Role } from '@prisma/client';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { mkdir, writeFile } from 'fs/promises';
 import { extname, join } from 'path';
@@ -8,10 +8,12 @@ import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class EmployeesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private audit: AuditService) {}
 
   private cleanCuil(cuil: string) {
     return cuil.replace(/\D/g, '');
@@ -20,7 +22,7 @@ export class EmployeesService {
   async findAll() {
     const rows = await this.prisma.employee.findMany({
       where: { deletedAt: null },
-      include: { user: true, remoteDays: true, licenseRequests: true },
+      include: { user: true, remoteDays: true, licenseRequests: true, dependencyRef: true },
       orderBy: { name: 'asc' },
     });
     return rows.map(employeeToDto);
@@ -30,7 +32,7 @@ export class EmployeesService {
     if (user?.role !== Role.ADMIN && user?.employeeId !== id) throw new ForbiddenException();
     const row = await this.prisma.employee.findFirst({
       where: { id, deletedAt: null },
-      include: { user: true, remoteDays: true, licenseRequests: true },
+      include: { user: true, remoteDays: true, licenseRequests: true, dependencyRef: true },
     });
     if (!row) throw new NotFoundException('Empleado no encontrado');
     return employeeToDto(row);
@@ -41,48 +43,112 @@ export class EmployeesService {
     return this.findOne(user.employeeId, user);
   }
 
-  async create(dto: CreateEmployeeDto) {
-    const cuil = this.cleanCuil(dto.cuil);
-    const password = dto.password || dto.cuil || 'Temporal123';
-    const employee = await this.prisma.employee.create({
+  async updateMe(user: JwtUser, dto: UpdateMyProfileDto) {
+    if (!user.employeeId) throw new NotFoundException('Usuario sin empleado asociado');
+    const current = await this.prisma.employee.findFirst({ where: { id: user.employeeId, deletedAt: null }, include: { user: true } });
+    if (!current) throw new NotFoundException('Empleado no encontrado');
+
+    const name = dto.name?.trim();
+    const email = dto.email?.trim();
+    const avatar = dto.avatar?.trim();
+
+    await this.prisma.employee.update({
+      where: { id: current.id },
       data: {
-        name: dto.name,
-        email: dto.email,
-        avatar: dto.avatar,
-        dependency: dto.dependency,
-        position: dto.position,
-        cuil,
-        totalLicenseDays: dto.totalLicenseDays || 0,
-        strikeDutyOrder: dto.strikeDutyOrder ?? -1,
-        remoteDays: { create: (dto.remoteDaysAssigned || []).map((day) => ({ day })) },
+        name: name || undefined,
+        email: email ?? undefined,
+        avatar: avatar || undefined,
       },
     });
-    await this.prisma.user.create({
-      data: {
-        cuil,
-        email: dto.email,
-        passwordHash: await bcrypt.hash(password, 10),
-        role: toRole(dto.isAdmin),
-        mustChangePassword: dto.mustChangePassword ?? true,
-        employeeId: employee.id,
-      },
-    });
-    return this.findOne(employee.id, { id: '', cuil: '', email: '', role: Role.ADMIN });
+
+    const profilePassword = dto.password?.trim();
+    if (current.user) {
+      await this.prisma.user.update({
+        where: { id: current.user.id },
+        data: {
+          email: email ?? undefined,
+          passwordHash: profilePassword ? await bcrypt.hash(profilePassword, 10) : undefined,
+        },
+      });
+    }
+
+    await this.audit.record(user, { action: 'UPDATE', module: 'EMPLOYEES', entityType: 'Employee', entityId: current.id, title: name || current.name, detail: 'Perfil propio actualizado' });
+    return this.findOne(current.id, { id: '', cuil: '', email: '', role: Role.ADMIN });
   }
 
+  async create(dto: CreateEmployeeDto, user: JwtUser) {
+    const name = dto.name?.trim();
+    const email = dto.email?.trim();
+    const cuil = this.cleanCuil(dto.cuil || '');
+    const password = dto.password?.trim();
+    if (!name) throw new BadRequestException('El nombre es obligatorio');
+    if (!email) throw new BadRequestException('El email es obligatorio');
+    if (!cuil) throw new BadRequestException('CUIL invalido');
+    if (!password) throw new BadRequestException('La clave provisoria es obligatoria');
+    if (!dto.dependencyId && !dto.dependency?.trim()) throw new BadRequestException('Selecciona una dependencia');
+
+    const existingByCuil = await this.prisma.employee.findFirst({ where: { cuil, deletedAt: null } })
+      || await this.prisma.user.findFirst({ where: { cuil, deletedAt: null } });
+    if (existingByCuil) throw new ConflictException('El CUIL ya existe');
+
+    const existingByEmail = await this.prisma.employee.findFirst({ where: { email, deletedAt: null } })
+      || await this.prisma.user.findFirst({ where: { email, deletedAt: null } });
+    if (existingByEmail) throw new ConflictException('El email ya existe');
+
+    const dependency = dto.dependencyId
+      ? await this.prisma.dependency.findFirst({ where: { id: dto.dependencyId, deletedAt: null, isActive: true } })
+      : dto.dependency ? await this.prisma.dependency.findFirst({ where: { name: { equals: dto.dependency.trim(), mode: 'insensitive' }, deletedAt: null } }) : null;
+    if (!dependency) throw new BadRequestException('Dependencia invalida o inactiva');
+
+    const employee = await this.prisma.$transaction(async (tx) => {
+      const createdEmployee = await tx.employee.create({
+        data: {
+          name,
+          email,
+          avatar: dto.avatar,
+          dependency: dependency.name,
+          dependencyId: dependency.id,
+          position: dto.position,
+          cuil,
+          totalLicenseDays: dto.totalLicenseDays ?? 0,
+          strikeDutyOrder: dto.strikeDutyOrder ?? -1,
+          remoteDays: { create: (dto.remoteDaysAssigned || []).map((day) => ({ day })) },
+        },
+      });
+      await tx.user.create({
+        data: {
+          cuil,
+          email,
+          passwordHash: await bcrypt.hash(password, 10),
+          role: toRole(dto.isAdmin),
+          mustChangePassword: dto.mustChangePassword ?? true,
+          employeeId: createdEmployee.id,
+        },
+      });
+      return createdEmployee;
+    });
+
+    await this.audit.record(user, { action: 'CREATE', module: 'EMPLOYEES', entityType: 'Employee', entityId: employee.id, title: employee.name, detail: 'Empleado creado' });
+    return this.findOne(employee.id, { id: '', cuil: '', email: '', role: Role.ADMIN });
+  }
   async update(id: string, dto: UpdateEmployeeDto, user?: JwtUser) {
     const isAdmin = user?.role === Role.ADMIN;
     if (!isAdmin && user?.employeeId !== id) throw new ForbiddenException();
     const current = await this.prisma.employee.findFirst({ where: { id, deletedAt: null }, include: { user: true } });
     if (!current) throw new NotFoundException('Empleado no encontrado');
+    const dependency = isAdmin && dto.dependencyId
+      ? await this.prisma.dependency.findFirst({ where: { id: dto.dependencyId, deletedAt: null, isActive: true } })
+      : null;
+    if (isAdmin && dto.dependencyId && !dependency) throw new BadRequestException('Dependencia inválida o inactiva');
     await this.prisma.employee.update({
       where: { id },
       data: {
         name: dto.name,
         email: dto.email,
-        avatar: dto.avatar,
-        dependency: dto.dependency,
-        position: dto.position,
+        avatar: isAdmin && dto.avatar?.trim() ? dto.avatar.trim() : undefined,
+        dependency: isAdmin ? dependency?.name || dto.dependency : undefined,
+        dependencyId: isAdmin ? dependency?.id : undefined,
+        position: isAdmin ? dto.position : undefined,
         cuil: isAdmin && dto.cuil ? this.cleanCuil(dto.cuil) : undefined,
         totalLicenseDays: isAdmin ? dto.totalLicenseDays : undefined,
         strikeDutyOrder: isAdmin ? dto.strikeDutyOrder : undefined,
@@ -92,6 +158,7 @@ export class EmployeesService {
       await this.prisma.remoteDay.deleteMany({ where: { employeeId: id } });
       await this.prisma.remoteDay.createMany({ data: dto.remoteDaysAssigned.map((day) => ({ employeeId: id, day })), skipDuplicates: true });
     }
+    const password = dto.password?.trim();
     if (current.user) {
       await this.prisma.user.update({
         where: { id: current.user.id },
@@ -100,15 +167,22 @@ export class EmployeesService {
           cuil: isAdmin && dto.cuil ? this.cleanCuil(dto.cuil) : undefined,
           role: isAdmin && dto.isAdmin !== undefined ? toRole(dto.isAdmin) : undefined,
           mustChangePassword: isAdmin ? dto.mustChangePassword : undefined,
-          passwordHash: isAdmin && dto.password ? await bcrypt.hash(dto.password, 10) : undefined,
+          passwordHash: isAdmin && password ? await bcrypt.hash(password, 10) : undefined,
         },
       });
+    }
+    await this.audit.record(user, { action: 'UPDATE_EMPLOYEE', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: dto.name || current.name, detail: user?.employeeId === id ? 'Perfil propio actualizado' : 'Empleado editado' });
+    if (isAdmin && password) {
+      await this.audit.record(user, { action: 'RESET_EMPLOYEE_PASSWORD', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: dto.name || current.name, detail: 'Contrase�a de agente actualizada por ADMIN' });
     }
     return this.findOne(id, { id: '', cuil: '', email: '', role: Role.ADMIN });
   }
 
-  async remove(id: string) {
+  async remove(id: string, user: JwtUser) {
+    const current = await this.prisma.employee.findFirst({ where: { id, deletedAt: null } });
+    if (!current) throw new NotFoundException('Empleado no encontrado');
     await this.prisma.employee.update({ where: { id }, data: { deletedAt: new Date(), user: { update: { deletedAt: new Date() } } } });
+    await this.audit.record(user, { action: 'DELETE', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: current.name, detail: 'Empleado desactivado' });
     return { status: 'success' };
   }
 
@@ -136,13 +210,11 @@ export class EmployeesService {
     return this.findOne(id, { id: user.id, cuil: user.cuil, email: user.email, role: Role.ADMIN });
   }
 
-  async resetGuardias(id: string) {
+  async adjustCompensatoryDays(id: string, days: number, user: JwtUser) {
     const current = await this.prisma.employee.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException('Empleado no encontrado');
-    await this.prisma.licenseRequest.updateMany({
-      where: { employeeId: id, article: 'Guardia en Feria', status: LicenseStatus.APPROVED, deletedAt: null },
-      data: { deletedAt: new Date() },
-    });
+    await this.prisma.employee.update({ where: { id }, data: { compensatoryDays: days } });
+    await this.audit.record(user, { action: 'RESET_COMPENSATORY_DAYS', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: current.name, detail: `Ajustó días compensatorios de ${current.compensatoryDays} a ${days}` });
     return this.findOne(id, { id: '', cuil: '', email: '', role: Role.ADMIN });
   }
 }

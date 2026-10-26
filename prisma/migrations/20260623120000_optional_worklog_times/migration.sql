@@ -1,0 +1,3 @@
+ALTER TABLE "WorkLog"
+ADD COLUMN "entryTime" TEXT,
+ADD COLUMN "exitTime" TEXT;

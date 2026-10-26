@@ -8,17 +8,35 @@ import { CreateProjectDto } from './dto/create-project.dto';
 import { CreateProjectUpdateDto } from './dto/create-project-update.dto';
 import { UpdateDeploymentDto } from './dto/update-deployment.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { AuditService } from '../audit/audit.service';
 
 const projectInclude = {
   assignedEmployees: true,
   owner: true,
   updates: { orderBy: { createdAt: 'asc' as const } },
-  deployments: { orderBy: { deployedAt: 'desc' as const }, include: { deployedBy: { include: { employee: true } } } },
+  workLogs: { where: { deletedAt: null }, orderBy: [{ updatedAt: 'desc' as const }, { createdAt: 'desc' as const }, { date: 'desc' as const }], take: 1 },
+  comments: { where: { deletedAt: null }, orderBy: [{ updatedAt: 'desc' as const }, { createdAt: 'desc' as const }], take: 1 },
+  deployments: { orderBy: [{ updatedAt: 'desc' as const }, { deployedAt: 'desc' as const }, { createdAt: 'desc' as const }], include: { deployedBy: { include: { employee: true } } } },
 };
 
 @Injectable()
 export class ProjectsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private audit: AuditService) {}
+
+  private normalizeTechStack(value?: string | null) {
+    const seen = new Set<string>();
+    return (value || '')
+      .split(/[,;/|]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .filter((item) => {
+        const key = item.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .join(', ');
+  }
 
   private accessWhere(user: JwtUser) {
     return user.role === Role.ADMIN ? {} : { assignedEmployees: { some: { id: user.employeeId || '' } } };
@@ -54,7 +72,7 @@ export class ProjectsService {
       include: projectInclude,
       orderBy: [{ year: 'desc' }, { updatedAt: 'desc' }],
     });
-    return projects.map(projectToDto);
+    return projects.map(projectToDto).sort((a: any, b: any) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
   }
 
   async findOne(id: string, user: JwtUser) {
@@ -80,7 +98,7 @@ export class ProjectsService {
         repositoryApiUrl: dto.repositoryApiUrl,
         repositoryWebUrl: dto.repositoryWebUrl,
         branch: dto.branch,
-        techStack: dto.techStack,
+        techStack: this.normalizeTechStack(dto.techStack),
         notes: dto.notes,
         needsRedesign: dto.needsRedesign || false,
         needsRework: dto.needsRework || false,
@@ -95,6 +113,7 @@ export class ProjectsService {
       },
       include: projectInclude,
     });
+    await this.audit.record(user, { action: 'CREATE', module: 'PROJECTS', entityType: 'Project', entityId: project.id, title: project.name, detail: 'Proyecto creado' });
     return projectToDto(project);
   }
 
@@ -123,7 +142,7 @@ export class ProjectsService {
         repositoryApiUrl: dto.repositoryApiUrl,
         repositoryWebUrl: dto.repositoryWebUrl,
         branch: dto.branch,
-        techStack: dto.techStack,
+        techStack: dto.techStack === undefined ? undefined : this.normalizeTechStack(dto.techStack),
         notes: dto.notes,
         needsRedesign: dto.needsRedesign,
         needsRework: dto.needsRework,
@@ -138,13 +157,15 @@ export class ProjectsService {
       },
       include: projectInclude,
     });
+    await this.audit.record(user, { action: 'UPDATE', module: 'PROJECTS', entityType: 'Project', entityId: project.id, title: project.name, detail: 'Proyecto editado' });
     return projectToDto(project);
   }
 
-  async remove(id: string) {
+  async remove(id: string, user: JwtUser) {
     const current = await this.prisma.project.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException('Proyecto no encontrado');
     await this.prisma.project.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.audit.record(user, { action: 'DELETE', module: 'PROJECTS', entityType: 'Project', entityId: id, title: current.name, detail: 'Proyecto ocultado de los listados' });
     return { status: 'success' };
   }
 
@@ -161,7 +182,7 @@ export class ProjectsService {
     if (!current) throw new NotFoundException('Proyecto no encontrado');
     this.assertAdminOrAssigned(current, user);
 
-    await this.prisma.projectUpdate.create({
+    const update = await this.prisma.projectUpdate.create({
       data: {
         projectId: id,
         content: dto.content,
@@ -176,6 +197,7 @@ export class ProjectsService {
         authorId: user.employeeId,
       },
     });
+    await this.audit.record(user, { action: 'CREATE_UPDATE', module: 'PROJECTS', entityType: 'ProjectUpdate', entityId: update.id, title: current.name, detail: 'Avance de proyecto agregado' });
     return this.findOne(id, user);
   }
 
@@ -271,7 +293,8 @@ export class ProjectsService {
 
   async addComment(id: string, message: string, user: JwtUser) {
     await this.findOne(id, user);
-    await this.prisma.projectComment.create({ data: { projectId: id, authorUserId: user.id, message: message.trim() } });
+    const comment = await this.prisma.projectComment.create({ data: { projectId: id, authorUserId: user.id, message: message.trim() } });
+    await this.audit.record(user, { action: 'CREATE_COMMENT', module: 'PROJECTS', entityType: 'ProjectComment', entityId: comment.id, title: 'Comentario agregado', detail: `Comentario interno en proyecto ${id}` });
     return this.comments(id, user);
   }
 
@@ -281,6 +304,7 @@ export class ProjectsService {
     if (!comment) throw new NotFoundException('Comentario no encontrado');
     if (user.role !== Role.ADMIN && comment.authorUserId !== user.id) throw new ForbiddenException();
     await this.prisma.projectComment.update({ where: { id: commentId }, data: { deletedAt: new Date() } });
-    return { status: 'success' };
+    await this.audit.record(user, { action: 'DELETE_COMMENT', module: 'PROJECTS', entityType: 'ProjectComment', entityId: commentId, title: 'Comentario eliminado', detail: `Comentario interno en proyecto ${id}` });
+    return { status: 'success', message: 'Proyecto eliminado correctamente' };
   }
 }

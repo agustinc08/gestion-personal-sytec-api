@@ -1,0 +1,92 @@
+# Flujo (sytec-pjn/ci-workflows, igual que las otras apps):
+#   PR a dev/main          → validate
+#   push a dev             → lo anterior + imagen dev-<sha7> + deploy a dev
+#   push a main            → lo anterior + imagen prod-<sha7> (sin deploy)
+#   workflow_dispatch      → sólo deploy del tag indicado: es el deploy a prod y también el rollback
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+    inputs:
+      env:
+        description: Entorno
+        type: choice
+        options: [prod, dev]
+        default: prod
+      tag:
+        description: "Tag a desplegar (prod-<sha7> / dev-<sha7>). Lo publica el build de main o dev."
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # En PR se cancela la corrida vieja; en dev/main no, porque termina en build/deploy.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/gestion_personal_sytec
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.34.3
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prisma generate
+      - run: pnpm exec prisma validate
+      # Informativo: el código es el que corría en VPS-04 (Nest 10, multer viejo, etc.) y actualizar
+      # dependencias es un cambio aparte.
+      - run: pnpm audit --prod
+        continue-on-error: true
+      # El repo no tiene typecheck, lint ni tests: el build (nest build) es el chequeo de tipos.
+      - run: pnpm run build
+
+  build:
+    if: github.event_name == 'push'
+    needs: validate
+    uses: sytec-pjn/ci-workflows/.github/workflows/build-image.yml@v1
+    permissions: { contents: read, packages: write }
+    with:
+      env: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+
+  deploy-dev:
+    if: github.event_name == 'push' && github.ref_name == 'dev'
+    needs: build
+    uses: sytec-pjn/ci-workflows/.github/workflows/deploy.yml@v1
+    permissions: { contents: read, packages: write }
+    with:
+      env: dev
+      image-tag: ${{ needs.build.outputs.image-tag }}
+      stack-dir: /opt/docker/gestion-personal-sytec-api
+      health-targets: gestion-personal-sytec-api-dev:4000/health
+      compose-vars: |
+        APP_DOMAIN=${{ vars.APP_DOMAIN_DEV }}
+        APP_PATH=${{ vars.APP_PATH_DEV }}
+
+  deploy-manual:
+    if: github.event_name == 'workflow_dispatch'
+    uses: sytec-pjn/ci-workflows/.github/workflows/deploy.yml@v1
+    permissions: { contents: read, packages: write }
+    with:
+      env: ${{ inputs.env }}
+      image-tag: ${{ inputs.tag }}
+      stack-dir: /opt/docker/gestion-personal-sytec-api
+      health-targets: gestion-personal-sytec-api-${{ inputs.env }}:4000/health
+      deployers: ${{ vars.DEPLOYERS_PROD }}
+      compose-vars: |
+        APP_DOMAIN=${{ inputs.env == 'prod' && vars.APP_DOMAIN_PROD || vars.APP_DOMAIN_DEV }}
+        APP_PATH=${{ inputs.env == 'prod' && vars.APP_PATH_PROD || vars.APP_PATH_DEV }}

@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { LicenseStatus, Prisma, Role } from '@prisma/client';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
+import { addDays, dateOnlyToArgentinaDate, formatDateOnlyArgentina, getArgentinaTodayDateOnly } from '../../shared/date-utils';
 
 type Notice = { type: string; title: string; message: string; link?: string; key: string; metadata?: Prisma.InputJsonValue };
 
@@ -9,12 +10,12 @@ type Notice = { type: string; title: string; message: string; link?: string; key
 export class NotificationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private day(value = new Date()) {
-    return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  private day(value?: Date | string | null) {
+    return dateOnlyToArgentinaDate(value || getArgentinaTodayDateOnly())!;
   }
 
-  private dateKey(value: Date) {
-    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  private dateKey(value: Date | string) {
+    return formatDateOnlyArgentina(value);
   }
 
   private audience(user: JwtUser) {
@@ -31,16 +32,16 @@ export class NotificationsService {
 
   private async refresh(user: JwtUser) {
     const today = this.day();
-    const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+    const tomorrow = addDays(today, 1);
     const todayKey = this.dateKey(today);
     const notices: Notice[] = [];
 
     if (user.role === Role.EMPLOYEE && user.employeeId) {
       const workLog = await this.prisma.workLog.findFirst({ where: { employeeId: user.employeeId, deletedAt: null, date: { gte: today, lt: tomorrow } }, select: { id: true } });
-      if (!workLog) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Parte diario pendiente', message: 'Todavía no cargaste tu parte diario de hoy.', link: '/?seccion=parte-diario', key: `worklog:${todayKey}` });
+      if (!workLog) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Parte diario pendiente', message: 'Todavía no cargaste tu parte diario de hoy.', link: '?seccion=parte-diario', key: `worklog:${todayKey}` });
 
       const recentLicenses = await this.prisma.licenseRequest.findMany({ where: { employeeId: user.employeeId, deletedAt: null, status: { in: [LicenseStatus.APPROVED, LicenseStatus.REJECTED] }, updatedAt: { gte: new Date(today.getTime() - 30 * 86400000) } }, select: { id: true, status: true, updatedAt: true } });
-      recentLicenses.forEach((license) => notices.push({ type: 'LICENSE_STATUS_EMPLOYEE', title: license.status === LicenseStatus.APPROVED ? 'Licencia aprobada' : 'Licencia rechazada', message: `Tu solicitud de licencia fue ${license.status === LicenseStatus.APPROVED ? 'aprobada' : 'rechazada'}.`, link: '/?seccion=licencias', key: `license:${license.id}:${license.status}` }));
+      recentLicenses.forEach((license) => notices.push({ type: 'LICENSE_STATUS_EMPLOYEE', title: license.status === LicenseStatus.APPROVED ? 'Licencia aprobada' : 'Licencia rechazada', message: `Tu solicitud de licencia fue ${license.status === LicenseStatus.APPROVED ? 'aprobada' : 'rechazada'}.`, link: '?seccion=licencias', key: `license:${license.id}:${license.status}` }));
     }
 
     if (user.role === Role.ADMIN) {
@@ -49,9 +50,9 @@ export class NotificationsService {
         this.prisma.workLog.findMany({ where: { deletedAt: null, date: { gte: today, lt: tomorrow } }, distinct: ['employeeId'], select: { employeeId: true } }),
         this.prisma.employee.count({ where: { deletedAt: null } }),
       ]);
-      if (pendingLicenses) notices.push({ type: 'LICENSE_PENDING_ADMIN', title: 'Licencias pendientes', message: `Hay ${pendingLicenses} ${pendingLicenses === 1 ? 'solicitud de licencia esperando' : 'solicitudes de licencia esperando'} revisión.`, link: '/?seccion=licencias', key: `licenses-pending:${todayKey}`, metadata: { count: pendingLicenses } });
+      if (pendingLicenses) notices.push({ type: 'LICENSE_PENDING_ADMIN', title: 'Licencias pendientes', message: `Hay ${pendingLicenses} ${pendingLicenses === 1 ? 'solicitud de licencia esperando' : 'solicitudes de licencia esperando'} revisión.`, link: '?seccion=licencias', key: `licenses-pending:${todayKey}`, metadata: { count: pendingLicenses } });
       const missing = Math.max(0, activeEmployees - employeesWithLog.length);
-      if (missing) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Partes diarios pendientes', message: `Hay ${missing} ${missing === 1 ? 'agente' : 'agentes'} sin cargar el parte diario de hoy.`, link: '/?seccion=asistencia', key: `admin-worklog:${todayKey}`, metadata: { count: missing } });
+      if (missing) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Partes diarios pendientes', message: `Hay ${missing} ${missing === 1 ? 'agente' : 'agentes'} sin cargar el parte diario de hoy.`, link: '?seccion=asistencia', key: `admin-worklog:${todayKey}`, metadata: { count: missing } });
     }
 
     const strike = await this.prisma.strikeConfig.findUnique({ where: { id: 'default' } });
@@ -62,7 +63,7 @@ export class NotificationsService {
         const employee = await this.prisma.employee.findUnique({ where: { id: strike.nextCoverEmployeeId }, select: { name: true } });
         const formatted = dutyDate.toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
         const employeeMessage = days === 0 ? `Hoy te toca cubrir la guardia (${formatted}).` : days === 1 ? `Mañana te toca cubrir la guardia (${formatted}).` : `Te toca cubrir la guardia el ${formatted}.`;
-        notices.push({ type: 'STRIKE_DUTY_REMINDER', title: user.role === Role.ADMIN ? 'Próxima guardia de paro' : 'Guardia de paro asignada', message: user.role === Role.ADMIN ? `${employee?.name || 'Un agente'} cubre el ${formatted}.` : employeeMessage, link: '/?seccion=guardias', key: `strike:${strike.nextCoverEmployeeId}:${this.dateKey(dutyDate)}:${days}` });
+        notices.push({ type: 'STRIKE_DUTY_REMINDER', title: user.role === Role.ADMIN ? 'Próxima guardia de paro' : 'Guardia de paro asignada', message: user.role === Role.ADMIN ? `${employee?.name || 'Un agente'} cubre el ${formatted}.` : employeeMessage, link: '?seccion=guardias', key: `strike:${strike.nextCoverEmployeeId}:${this.dateKey(dutyDate)}:${days}` });
       }
     }
 
@@ -72,7 +73,7 @@ export class NotificationsService {
       const deadline = this.day(project.deadline!);
       const days = Math.round((deadline.getTime() - today.getTime()) / 86400000);
       const status = days < 0 ? 'está vencido' : days === 0 ? 'vence hoy' : `vence en ${days} ${days === 1 ? 'día' : 'días'}`;
-      notices.push({ type: 'PROJECT_DEADLINE', title: days < 0 ? 'Proyecto vencido' : 'Proyecto próximo a vencer', message: `El proyecto ${project.name} ${status}.`, link: `/?seccion=proyectos&proyecto=${project.id}`, key: `deadline:${project.id}:${todayKey}`, metadata: { projectId: project.id, days } });
+      notices.push({ type: 'PROJECT_DEADLINE', title: days < 0 ? 'Proyecto vencido' : 'Proyecto próximo a vencer', message: `El proyecto ${project.name} ${status}.`, link: `?seccion=proyectos&proyecto=${project.id}`, key: `deadline:${project.id}:${todayKey}`, metadata: { projectId: project.id, days } });
     });
 
     await Promise.all(notices.map((notice) => this.create(user, notice)));

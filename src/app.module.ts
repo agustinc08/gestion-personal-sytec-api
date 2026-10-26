@@ -12,6 +12,13 @@ import { StrikeModule } from './modules/strike/strike.module';
 import { UsersModule } from './modules/users/users.module';
 import { WorkLogsModule } from './modules/work-logs/work-logs.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { DependenciesModule } from './modules/dependencies/dependencies.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { SettingsModule } from './modules/settings/settings.module';
+import { SearchModule } from './modules/search/search.module';
+import { ExportsModule } from './modules/exports/exports.module';
+import { AnnouncementsModule } from './modules/announcements/announcements.module';
+import { SecondaryWorkItemsModule } from './modules/secondary-work-items/secondary-work-items.module';
 
 @Module({
   imports: [
@@ -27,6 +34,13 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     DashboardModule,
     StatisticsModule,
     NotificationsModule,
+    DependenciesModule,
+    AuditModule,
+    SettingsModule,
+    SearchModule,
+    ExportsModule,
+    AnnouncementsModule,
+    SecondaryWorkItemsModule,
   ],
   controllers: [HealthController],
 })

@@ -7,7 +7,9 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 import { EmployeesService } from './employees.service';
+import { AdjustCompensatoryDaysDto } from './dto/adjust-compensatory-days.dto';
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('employees')
@@ -16,14 +18,15 @@ export class EmployeesController {
 
   @Get() @Roles(Role.ADMIN) findAll() { return this.employees.findAll(); }
   @Get('me') me(@CurrentUser() user: JwtUser) { return this.employees.findMe(user); }
-  @Patch('me') updateMe(@CurrentUser() user: JwtUser, @Body() dto: UpdateEmployeeDto) { return this.employees.update(user.employeeId!, dto, user); }
+  @Patch('me') updateMe(@CurrentUser() user: JwtUser, @Body() dto: UpdateMyProfileDto) { return this.employees.updateMe(user, dto); }
   @Post('me/avatar') @UseInterceptors(FileInterceptor('avatar', { limits: { fileSize: 5 * 1024 * 1024 } }))
   uploadMyAvatar(@CurrentUser() user: JwtUser, @UploadedFile() file: any) { return this.employees.updateAvatar(user.employeeId!, file, user); }
   @Get(':id') findOne(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.employees.findOne(id, user); }
-  @Post() @Roles(Role.ADMIN) create(@Body() dto: CreateEmployeeDto) { return this.employees.create(dto); }
+  @Post() @Roles(Role.ADMIN) create(@Body() dto: CreateEmployeeDto, @CurrentUser() user: JwtUser) { return this.employees.create(dto, user); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateEmployeeDto, @CurrentUser() user: JwtUser) { return this.employees.update(id, dto, user); }
   @Post(':id/avatar') @UseInterceptors(FileInterceptor('avatar', { limits: { fileSize: 5 * 1024 * 1024 } }))
   uploadAvatar(@Param('id') id: string, @UploadedFile() file: any, @CurrentUser() user: JwtUser) { return this.employees.updateAvatar(id, file, user); }
-  @Post(':id/reset-guardias') @Roles(Role.ADMIN) resetGuardias(@Param('id') id: string) { return this.employees.resetGuardias(id); }
-  @Delete(':id') @Roles(Role.ADMIN) remove(@Param('id') id: string) { return this.employees.remove(id); }
+  @Post(':id/reset-guardias') @Roles(Role.ADMIN) resetGuardias(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.employees.adjustCompensatoryDays(id, 0, user); }
+  @Patch(':id/compensatory-days') @Roles(Role.ADMIN) adjustCompensatoryDays(@Param('id') id: string, @Body() dto: AdjustCompensatoryDaysDto, @CurrentUser() user: JwtUser) { return this.employees.adjustCompensatoryDays(id, dto.days, user); }
+  @Delete(':id') @Roles(Role.ADMIN) remove(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.employees.remove(id, user); }
 }
