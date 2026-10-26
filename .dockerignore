@@ -1,4 +1,8 @@
 node_modules
 dist
-.env
+uploads
 coverage
+.env
+.env.*
+db-store.json
+.git

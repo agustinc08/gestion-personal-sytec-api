@@ -1,0 +1,49 @@
+# API de Gestión Personal SYTEC. Un archivo para los dos entornos: ENV los distingue.
+#
+# deploy.yml (sytec-pjn/ci-workflows) lo copia a /opt/docker/gestion-personal-sytec-api antes de
+# levantar, así que este archivo es la copia autoritativa. ENV e IMAGE_TAG los exporta deploy.yml;
+# APP_DOMAIN y APP_PATH llegan por compose-vars (ver ci.yml). Las credenciales van en .env.<env>
+# (ver env.example).
+#
+# El arranque aplica las migraciones pendientes (`prisma migrate deploy`), como en VPS-04.
+name: gestion-personal-sytec-api-${ENV}
+
+services:
+  api:
+    image: ghcr.io/sytec-pjn/gestion-personal-sytec-api:${IMAGE_TAG}
+    container_name: gestion-personal-sytec-api-${ENV}
+    restart: unless-stopped
+    init: true
+    mem_limit: 512m
+    env_file:
+      - .env.${ENV}
+    environment:
+      PORT: "4000"
+    volumes:
+      - uploads:/app/uploads
+    networks:
+      - proxy-network
+      - data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy-network"
+      # Path exacto o con barra: /gestion-personal-sytec-api no captura /gestion-personal-sytec-api-dev.
+      - "traefik.http.routers.gestion-personal-sytec-api-${ENV}.rule=Host(`${APP_DOMAIN}`) && (Path(`${APP_PATH}`) || PathPrefix(`${APP_PATH}/`))"
+      - "traefik.http.routers.gestion-personal-sytec-api-${ENV}.entrypoints=websecure"
+      - "traefik.http.routers.gestion-personal-sytec-api-${ENV}.tls=true"
+      - "traefik.http.routers.gestion-personal-sytec-api-${ENV}.middlewares=gestion-personal-sytec-api-${ENV}-strip"
+      - "traefik.http.middlewares.gestion-personal-sytec-api-${ENV}-strip.stripprefix.prefixes=${APP_PATH}"
+      - "traefik.http.services.gestion-personal-sytec-api-${ENV}.loadbalancer.server.port=4000"
+
+volumes:
+  # Avatares y plantillas PDF de licencias. Externo: lo crea la migración y no se borra con el stack.
+  uploads:
+    external: true
+    name: gestion-personal-sytec-uploads-${ENV}
+
+networks:
+  proxy-network:
+    external: true
+  data:
+    external: true
+    name: data-${ENV}
