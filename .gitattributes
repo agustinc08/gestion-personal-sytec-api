@@ -1,0 +1,3 @@
+# Prisma guarda el checksum de cada migration.sql aplicado: los bytes no se tocan (algunas
+# migraciones se aplicaron en prod con CRLF).
+prisma/migrations/**/migration.sql -text
