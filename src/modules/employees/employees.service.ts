@@ -155,8 +155,16 @@ export class EmployeesService {
       },
     });
     if (isAdmin && dto.remoteDaysAssigned) {
-      await this.prisma.remoteDay.deleteMany({ where: { employeeId: id } });
-      await this.prisma.remoteDay.createMany({ data: dto.remoteDaysAssigned.map((day) => ({ employeeId: id, day })), skipDuplicates: true });
+      const beforeRows = await this.prisma.remoteDay.findMany({ where: { employeeId: id, date: null }, select: { day: true } });
+      const before = [...new Set(beforeRows.map((row) => row.day.trim()).filter(Boolean))].sort();
+      const after = [...new Set(dto.remoteDaysAssigned.map((day) => day.trim()).filter(Boolean))].sort();
+      if (JSON.stringify(before) !== JSON.stringify(after)) {
+        await this.prisma.$transaction(async (tx) => {
+          await tx.remoteDay.deleteMany({ where: { employeeId: id, date: null } });
+          if (after.length) await tx.remoteDay.createMany({ data: after.map((day) => ({ employeeId: id, day })), skipDuplicates: true });
+          await tx.auditLog.create({ data: { userId: user?.id, employeeId: user?.employeeId, action: 'REMOTE_DAYS_UPDATED', module: 'EMPLOYEES', entity: 'Employee', entityType: 'Employee', entityId: id, title: dto.name || current.name, detail: JSON.stringify({ before, after }) } });
+        });
+      }
     }
     const password = dto.password?.trim();
     if (current.user) {

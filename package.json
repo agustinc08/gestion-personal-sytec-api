@@ -5,6 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "build": "nest build",
+    "test": "node --import tsx --test src/shared/*.test.ts",
     "dev": "nest start --watch",
     "start:dev": "nest start --watch",
     "start": "node dist/main.js",
