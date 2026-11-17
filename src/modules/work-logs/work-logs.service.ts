@@ -1,7 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { toActivityType, toDate, toWorkLogMode, workLogToDto } from '../../shared/mappers';
-import { dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, monthRangeArgentina } from '../../shared/date-utils';
+import { dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina } from '../../shared/date-utils';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkLogDto } from './dto/create-work-log.dto';
@@ -9,6 +9,7 @@ import { UpdateWorkLogDto } from './dto/update-work-log.dto';
 import { SaveDailyAttendanceDto } from './dto/save-daily-attendance.dto';
 import { AuditService } from '../audit/audit.service';
 import { SecondaryWorkItemsService } from '../secondary-work-items/secondary-work-items.service';
+import { getWorkdayStatus } from '../../shared/workday';
 
 @Injectable()
 export class WorkLogsService {
@@ -53,6 +54,16 @@ export class WorkLogsService {
     if (!employeeId) throw new ForbiddenException();
     const date = toDate(dto.date)!;
     this.validateTimes(dto.entryTime, dto.exitTime);
+    let mode = toWorkLogMode(dto.mode);
+    if (user.role !== Role.ADMIN && formatDateOnlyArgentina(date) >= getArgentinaTodayDateOnly()) {
+      const [employee, strike] = await Promise.all([
+        this.prisma.employee.findUnique({ where: { id: employeeId }, include: { remoteDays: { where: { date: null } } } }),
+        this.prisma.strikeConfig.findUnique({ where: { id: 'default' } }),
+      ]);
+      const status = getWorkdayStatus({ date: dto.date, remoteDays: employee?.remoteDays.map((row) => row.day), strikeDate: strike?.nextDate });
+      if (status === 'REMOTE') mode = toWorkLogMode('remoto');
+      if (status === 'PRESENTIAL') mode = toWorkLogMode('presencial');
+    }
     const secondaryWorkItem = await this.resolveSecondaryWorkItem(dto, employeeId);
     const created = await this.prisma.workLog.create({
       data: {
@@ -62,7 +73,7 @@ export class WorkLogsService {
         title: dto.title,
         description: dto.description,
         date,
-        mode: toWorkLogMode(dto.mode),
+        mode,
         activityType: toActivityType(dto.activityType),
         hours: dto.hours,
         entryTime: dto.entryTime || null,

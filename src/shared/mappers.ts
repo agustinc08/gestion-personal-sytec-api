@@ -126,7 +126,7 @@ export function employeeToDto(employee: any) {
     guardiasDone: employee.compensatoryDays ?? sumDays('Guardia en Feria'),
     totalLicenseDays: employee.totalLicenseDays,
     licenseDaysTaken: sumDays('Art. 14'),
-    remoteDaysAssigned: (employee.remoteDays || []).map((d: any) => d.day),
+    remoteDaysAssigned: (employee.remoteDays || []).filter((d: any) => d.date == null).map((d: any) => d.day),
     strikeDutyOrder: employee.strikeDutyOrder,
     cuil: employee.cuil || '',
     password: '',
