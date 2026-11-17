@@ -1,4 +1,4 @@
-﻿-- CreateEnum
+-- CreateEnum
 CREATE TYPE "SecondaryWorkItemStatus" AS ENUM ('ACTIVE', 'ARCHIVED');
 
 -- CreateTable
