@@ -3,6 +3,7 @@ import { LicenseStatus, Prisma, Role } from '@prisma/client';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { addDays, dateOnlyToArgentinaDate, formatDateOnlyArgentina, getArgentinaTodayDateOnly } from '../../shared/date-utils';
+import { getWorkdayStatus, requiresWorkLog } from '../../shared/workday';
 
 type Notice = { type: string; title: string; message: string; link?: string; key: string; metadata?: Prisma.InputJsonValue };
 
@@ -35,27 +36,30 @@ export class NotificationsService {
     const tomorrow = addDays(today, 1);
     const todayKey = this.dateKey(today);
     const notices: Notice[] = [];
+    const strike = await this.prisma.strikeConfig.findUnique({ where: { id: 'default' } });
 
     if (user.role === Role.EMPLOYEE && user.employeeId) {
+      const employee = await this.prisma.employee.findUnique({ where: { id: user.employeeId }, include: { remoteDays: { where: { date: null } } } });
+      const workday = getWorkdayStatus({ date: todayKey, remoteDays: employee?.remoteDays.map((row) => row.day), strikeDate: strike?.nextDate });
       const workLog = await this.prisma.workLog.findFirst({ where: { employeeId: user.employeeId, deletedAt: null, date: { gte: today, lt: tomorrow } }, select: { id: true } });
-      if (!workLog) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Parte diario pendiente', message: 'Todavía no cargaste tu parte diario de hoy.', link: '?seccion=parte-diario', key: `worklog:${todayKey}` });
+      if (!workLog && requiresWorkLog(workday)) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Parte diario pendiente', message: 'Todavía no cargaste tu parte diario de hoy.', link: '?seccion=parte-diario', key: `worklog:${todayKey}` });
 
       const recentLicenses = await this.prisma.licenseRequest.findMany({ where: { employeeId: user.employeeId, deletedAt: null, status: { in: [LicenseStatus.APPROVED, LicenseStatus.REJECTED] }, updatedAt: { gte: new Date(today.getTime() - 30 * 86400000) } }, select: { id: true, status: true, updatedAt: true } });
       recentLicenses.forEach((license) => notices.push({ type: 'LICENSE_STATUS_EMPLOYEE', title: license.status === LicenseStatus.APPROVED ? 'Licencia aprobada' : 'Licencia rechazada', message: `Tu solicitud de licencia fue ${license.status === LicenseStatus.APPROVED ? 'aprobada' : 'rechazada'}.`, link: '?seccion=licencias', key: `license:${license.id}:${license.status}` }));
     }
 
     if (user.role === Role.ADMIN) {
-      const [pendingLicenses, employeesWithLog, activeEmployees] = await Promise.all([
+      const [pendingLicenses, employeesWithLog, employees] = await Promise.all([
         this.prisma.licenseRequest.count({ where: { status: LicenseStatus.PENDING, deletedAt: null } }),
         this.prisma.workLog.findMany({ where: { deletedAt: null, date: { gte: today, lt: tomorrow } }, distinct: ['employeeId'], select: { employeeId: true } }),
-        this.prisma.employee.count({ where: { deletedAt: null } }),
+        this.prisma.employee.findMany({ where: { deletedAt: null, user: { is: { role: Role.EMPLOYEE, deletedAt: null } } }, select: { id: true, remoteDays: { where: { date: null }, select: { day: true } } } }),
       ]);
       if (pendingLicenses) notices.push({ type: 'LICENSE_PENDING_ADMIN', title: 'Licencias pendientes', message: `Hay ${pendingLicenses} ${pendingLicenses === 1 ? 'solicitud de licencia esperando' : 'solicitudes de licencia esperando'} revisión.`, link: '?seccion=licencias', key: `licenses-pending:${todayKey}`, metadata: { count: pendingLicenses } });
-      const missing = Math.max(0, activeEmployees - employeesWithLog.length);
+      const loggedIds = new Set(employeesWithLog.map((row) => row.employeeId));
+      const missing = employees.filter((employee) => requiresWorkLog(getWorkdayStatus({ date: todayKey, remoteDays: employee.remoteDays.map((row) => row.day), strikeDate: strike?.nextDate })) && !loggedIds.has(employee.id)).length;
       if (missing) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Partes diarios pendientes', message: `Hay ${missing} ${missing === 1 ? 'agente' : 'agentes'} sin cargar el parte diario de hoy.`, link: '?seccion=asistencia', key: `admin-worklog:${todayKey}`, metadata: { count: missing } });
     }
 
-    const strike = await this.prisma.strikeConfig.findUnique({ where: { id: 'default' } });
     if (strike?.nextDate && strike.nextCoverEmployeeId) {
       const dutyDate = this.day(strike.nextDate);
       const days = Math.round((dutyDate.getTime() - today.getTime()) / 86400000);
