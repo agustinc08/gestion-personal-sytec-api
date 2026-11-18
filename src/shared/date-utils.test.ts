@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { addDateOnlyDays } from './date-utils';
 import { argentinaDayRange, argentinaMonthRange, parseArgentinaDateOnly } from './date-utils';
 
 describe('Argentina date-only ranges', () => {
@@ -18,5 +19,9 @@ describe('Argentina date-only ranges', () => {
   it('accepts valid date-only values and rejects impossible dates', () => {
     assert.equal(parseArgentinaDateOnly('2026-02-28'), '2026-02-28');
     assert.equal(parseArgentinaDateOnly('2026-02-30'), '');
+  });
+
+  it('adds calendar days without UTC date-only drift across month boundaries', () => {
+    assert.equal(addDateOnlyDays('2026-12-31', 1), '2027-01-01');
   });
 });

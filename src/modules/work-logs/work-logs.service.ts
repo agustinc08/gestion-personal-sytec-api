@@ -10,6 +10,7 @@ import { SaveDailyAttendanceDto } from './dto/save-daily-attendance.dto';
 import { AuditService } from '../audit/audit.service';
 import { SecondaryWorkItemsService } from '../secondary-work-items/secondary-work-items.service';
 import { getWorkdayStatus } from '../../shared/workday';
+import { getConfiguredPageSize, paginate, paginationRequested } from '../../shared/pagination';
 
 @Injectable()
 export class WorkLogsService {
@@ -37,6 +38,8 @@ export class WorkLogsService {
     if (query.secondaryWorkItemId) where.secondaryWorkItemId = query.secondaryWorkItemId;
     if (query.activityType) where.activityType = toActivityType(query.activityType);
     if (query.mode) where.mode = toWorkLogMode(query.mode);
+    if (query.from || query.to) where.date = { ...(where.date || {}), ...(query.from ? { gte: dateOnlyToArgentinaDayRange(query.from).start } : {}), ...(query.to ? { lt: dateOnlyToArgentinaDayRange(query.to).end } : {}) };
+    if (query.status === 'active') where.deletedAt = null;
     if (query.year) {
       const { start, end } = monthRangeArgentina(query.year, query.month);
       where.date = { gte: start, lt: end };
@@ -45,10 +48,15 @@ export class WorkLogsService {
   }
 
   async findAll(query: Record<string, string> = {}) {
-    return (await this.prisma.workLog.findMany({ where: this.where(query), include: { project: true, secondaryWorkItem: true }, orderBy: { date: 'desc' } })).map(workLogToDto);
+    return this.findWorkLogs(this.where(query), query);
   }
   async findMine(user: JwtUser, query: Record<string, string> = {}) {
-    return (await this.prisma.workLog.findMany({ where: this.where(query, user.employeeId || ''), include: { project: true, secondaryWorkItem: true }, orderBy: { date: 'desc' } })).map(workLogToDto);
+    return this.findWorkLogs(this.where(query, user.employeeId || ''), query);
+  }
+  private async findWorkLogs(where: any, query: Record<string, string>) {
+    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.workLog.findMany({ where, include: { project: true, secondaryWorkItem: true }, orderBy: { date: 'desc' }, ...(options || {}) })).map(workLogToDto);
+    if (!paginationRequested(query)) return fetch();
+    return paginate(query, await getConfiguredPageSize(this.prisma), (options) => fetch(options), () => this.prisma.workLog.count({ where }));
   }
   private async resolveSecondaryWorkItem(dto: { projectId?: string; secondaryWorkItemId?: string; secondaryWorkItemName?: string; title?: string }, employeeId?: string | null) {
     if (dto.projectId) return null;
@@ -153,7 +161,9 @@ export class WorkLogsService {
       const { start, end } = monthRangeArgentina(query.year, query.month);
       where.date = { gte: start, lt: end };
     }
-    return (await this.prisma.dailyAttendance.findMany({ where, orderBy: { date: 'desc' } })).map((row) => this.attendanceToDto(row));
+    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.dailyAttendance.findMany({ where, orderBy: { date: 'desc' }, ...(options || {}) })).map((row) => this.attendanceToDto(row));
+    if (!paginationRequested(query)) return fetch();
+    return paginate(query, await getConfiguredPageSize(this.prisma), (options) => fetch(options), () => this.prisma.dailyAttendance.count({ where }));
   }
 
   async saveAttendance(dto: SaveDailyAttendanceDto, user: JwtUser) {

@@ -5,6 +5,7 @@ import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { workLogToDto } from '../../shared/mappers';
 import { CreateSecondaryWorkItemDto } from './dto/create-secondary-work-item.dto';
 import { UpdateSecondaryWorkItemDto } from './dto/update-secondary-work-item.dto';
+import { getConfiguredPageSize, paginate, paginationRequested } from '../../shared/pagination';
 
 export function normalizeSecondaryWorkItemName(value?: string | null) {
   return (value || '')
@@ -58,11 +59,14 @@ export class SecondaryWorkItemsService {
     };
   }
 
-  async findAll(user: JwtUser) {
+  async findAll(user: JwtUser, query: Record<string, string> = {}) {
     const employeeId = user.role === Role.EMPLOYEE ? user.employeeId || '' : undefined;
-    const where = user.role === Role.EMPLOYEE ? { workLogs: { some: { employeeId, deletedAt: null } } } : {};
-    const rows = await this.prisma.secondaryWorkItem.findMany({ where, include: this.includeSummary(employeeId) });
-    return rows.map((row) => this.toDto(row)).sort((a, b) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
+    const where: any = user.role === Role.EMPLOYEE ? { workLogs: { some: { employeeId, deletedAt: null } } } : {};
+    if (query.q?.trim()) where.name = { contains: query.q.trim(), mode: 'insensitive' };
+    if (query.status) where.status = query.status;
+    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.secondaryWorkItem.findMany({ where, include: this.includeSummary(employeeId), orderBy: { updatedAt: 'desc' }, ...(options || {}) })).map((row) => this.toDto(row));
+    if (!paginationRequested(query)) return (await fetch()).sort((a, b) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
+    return paginate(query, await getConfiguredPageSize(this.prisma), fetch, () => this.prisma.secondaryWorkItem.count({ where }));
   }
 
   async findOrCreateByName(name: string, employeeId?: string | null) {

@@ -73,6 +73,12 @@ export function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 86400000);
 }
 
+export function addDateOnlyDays(value: string, days: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const result = new Date(Date.UTC(year, month - 1, day + days, 12));
+  return `${result.getUTCFullYear()}-${String(result.getUTCMonth() + 1).padStart(2, '0')}-${String(result.getUTCDate()).padStart(2, '0')}`;
+}
+
 export function argentinaYear(): number {
   return Number(getArgentinaTodayDateOnly().slice(0, 4));
 }

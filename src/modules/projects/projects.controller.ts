@@ -28,8 +28,8 @@ export class ProjectsController {
   }
 
   @Get('my')
-  my(@CurrentUser() user: JwtUser) {
-    return this.projects.my(user);
+  my(@CurrentUser() user: JwtUser, @Query() query: Record<string, string>) {
+    return this.projects.findAll(user, query);
   }
 
   @Get(':id')
