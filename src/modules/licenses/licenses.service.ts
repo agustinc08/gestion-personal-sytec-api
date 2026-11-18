@@ -9,7 +9,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateLicenseRequestDto } from './dto/create-license-request.dto';
 import { UpdateLicenseRequestDto } from './dto/update-license-request.dto';
 import { AuditService } from '../audit/audit.service';
-import { validateCertificate } from './certificate-validation';
+import { assertCertificateAccess, validateCertificate } from './certificate-validation';
+import { getConfiguredPageSize, paginate, paginationRequested } from '../../shared/pagination';
+import { dateOnlyToArgentinaDayRange } from '../../shared/date-utils';
 
 const FIERA_GUARD_LICENSE = 'Guardia en Feria';
 
@@ -27,12 +29,27 @@ function creditedDays(row: { article: string; status: LicenseStatus; deletedAt?:
 export class LicensesService {
   constructor(private prisma: PrismaService, private audit: AuditService) {}
 
-  async findAll() {
-    return (await this.prisma.licenseRequest.findMany({ where: { deletedAt: null }, orderBy: { dateRequested: 'desc' } })).map(licenseToDto);
+  async findAll(query: Record<string, string> = {}) {
+    return this.findRequests(this.listWhere(query), query);
   }
 
-  async findMine(user: JwtUser) {
-    return (await this.prisma.licenseRequest.findMany({ where: { employeeId: user.employeeId || '', deletedAt: null }, orderBy: { dateRequested: 'desc' } })).map(licenseToDto);
+  async findMine(user: JwtUser, query: Record<string, string> = {}) {
+    return this.findRequests({ ...this.listWhere(query), employeeId: user.employeeId || '' }, query);
+  }
+
+  private listWhere(query: Record<string, string>) {
+    const where: any = { deletedAt: null };
+    if (query.employeeId) where.employeeId = query.employeeId;
+    if (query.status) where.status = toLicenseStatus(query.status);
+    if (query.q?.trim()) where.OR = ['article', 'reason'].map((field) => ({ [field]: { contains: query.q.trim(), mode: 'insensitive' } }));
+    if (query.from || query.to) where.startDate = { ...(query.from ? { gte: dateOnlyToArgentinaDayRange(query.from).start } : {}), ...(query.to ? { lt: dateOnlyToArgentinaDayRange(query.to).end } : {}) };
+    return where;
+  }
+
+  private async findRequests(where: any, query: Record<string, string>) {
+    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.licenseRequest.findMany({ where, orderBy: { dateRequested: 'desc' }, ...(options || {}) })).map(licenseToDto);
+    if (!paginationRequested(query)) return fetch();
+    return paginate(query, await getConfiguredPageSize(this.prisma), fetch, () => this.prisma.licenseRequest.count({ where }));
   }
 
   async rules() { return this.prisma.licenseRule.findMany({ orderBy: { article: 'asc' } }); }
@@ -206,7 +223,7 @@ export class LicensesService {
   async downloadCertificate(id: string, user: JwtUser) {
     const row = await this.prisma.licenseRequest.findFirst({ where: { id, deletedAt: null } });
     if (!row || !row.certificateName) throw new NotFoundException('Certificado no encontrado');
-    if (user.role !== Role.ADMIN && row.employeeId !== user.employeeId) throw new NotFoundException('Certificado no encontrado');
+    assertCertificateAccess(row.employeeId, user);
     const [storedName, originalName] = row.certificateName.includes('|') ? row.certificateName.split('|', 2) : ['', row.certificateName];
     const extension = extname(originalName).toLowerCase();
     if (!['.pdf', '.jpg', '.jpeg', '.png'].includes(extension)) throw new NotFoundException('Certificado no encontrado');

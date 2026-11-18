@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { BadRequestException } from '@nestjs/common';
-import { validateCertificate } from './certificate-validation';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { Role } from '@prisma/client';
+import { assertCertificateAccess, validateCertificate } from './certificate-validation';
 
 describe('license certificate validation', () => {
   it('accepts matching PDF, JPEG and PNG signatures', () => {
@@ -15,5 +16,11 @@ describe('license certificate validation', () => {
     assert.throws(() => validateCertificate({ originalname: 'bad.png', mimetype: 'image/png', buffer: Buffer.from('not a png') }), BadRequestException);
     assert.throws(() => validateCertificate({ originalname: 'bad.exe', mimetype: 'application/octet-stream', buffer: Buffer.from('MZ') }), BadRequestException);
     assert.throws(() => validateCertificate({ originalname: 'big.pdf', mimetype: 'application/pdf', buffer: Buffer.alloc(5 * 1024 * 1024 + 1) }), BadRequestException);
+  });
+
+  it('allows the owner and ADMIN, but hides another employee certificate', () => {
+    assert.doesNotThrow(() => assertCertificateAccess('employee-a', { id: 'user-a', cuil: '', role: Role.EMPLOYEE, employeeId: 'employee-a' }));
+    assert.throws(() => assertCertificateAccess('employee-b', { id: 'user-a', cuil: '', role: Role.EMPLOYEE, employeeId: 'employee-a' }), NotFoundException);
+    assert.doesNotThrow(() => assertCertificateAccess('employee-b', { id: 'admin', cuil: '', role: Role.ADMIN }));
   });
 });

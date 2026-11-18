@@ -1,5 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { extname } from 'path';
+import { Role } from '@prisma/client';
+import type { JwtUser } from '../auth/decorators/current-user.decorator';
 
 const maxCertificateSize = 5 * 1024 * 1024;
 const allowedTypes: Record<string, { mime: string; signature?: Buffer }> = {
@@ -24,4 +26,8 @@ export function validateCertificate(file: { buffer?: Buffer; size?: number; mime
     : !!rule.signature && buffer.subarray(0, rule.signature.length).equals(rule.signature);
   if (!validSignature) throw new BadRequestException('El contenido del archivo no coincide con su formato');
   return { originalName, extension };
+}
+
+export function assertCertificateAccess(employeeId: string, user: JwtUser) {
+  if (user.role !== Role.ADMIN && employeeId !== user.employeeId) throw new NotFoundException('Certificado no encontrado');
 }
