@@ -86,7 +86,7 @@ export function fromWorkLogMode(mode: WorkLogMode) {
 }
 
 export function toWorkLogMode(mode?: string) {
-  return { presencial: WorkLogMode.ONSITE, remoto: WorkLogMode.REMOTE, mixto: WorkLogMode.MIXED, licencia: WorkLogMode.LICENSE }[mode || 'presencial'] || WorkLogMode.ONSITE;
+  return { presencial: WorkLogMode.ONSITE, remoto: WorkLogMode.REMOTE, mixto: WorkLogMode.MIXED, licencia: WorkLogMode.LICENSE, ONSITE: WorkLogMode.ONSITE, REMOTE: WorkLogMode.REMOTE, MIXED: WorkLogMode.MIXED, LICENSE: WorkLogMode.LICENSE }[mode || 'presencial'] || WorkLogMode.ONSITE;
 }
 
 export function toActivityType(activityType?: string) {
@@ -219,6 +219,7 @@ export function deploymentToDto(deployment: any) {
 }
 
 export function licenseToDto(req: any) {
+  const certificateName = req.certificateName ? String(req.certificateName).split('|').slice(1).join('|') || req.certificateName : undefined;
   return {
     id: req.id,
     employeeId: req.employeeId,
@@ -227,7 +228,7 @@ export function licenseToDto(req: any) {
     startDate: dateOnly(req.startDate),
     endDate: dateOnly(req.endDate),
     reason: req.reason,
-    certificateName: req.certificateName || undefined,
+    certificateName,
     status: fromLicenseStatus(req.status),
     dateRequested: dateOnly(req.dateRequested),
   };

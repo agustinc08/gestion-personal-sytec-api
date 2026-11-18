@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ProjectStatus } from '@prisma/client';
 import { addDays, dateOnlyToArgentinaDate, dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina } from '../../shared/date-utils';
 import { fromWorkLogMode } from '../../shared/mappers';
+import { pendingWorkLogEmployeeIds, approvedLeaveEmployeeIdsForDate } from '../../shared/worklog-pending';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -74,11 +75,19 @@ export class DashboardService {
     const [summaryYear, summaryMonth] = todayKey.split('-').map(Number);
     const monthStart = monthRangeArgentina(summaryYear, summaryMonth).start;
     const alertLimit = addDays(today, 15);
-    const [employeesActive, dependenciesActive, workLogsToday, expectedEmployees, pendingLicenses, approvedLicensesMonth, activeProjects, overdueProjects, upcomingProjects, strike, recentAudit, stackRows, employeesWithLatestLogs] = await Promise.all([
+    const [employeesActive, dependenciesActive, workLogsToday, employeesWithLogsToday, eligibleEmployees, approvedLeaveRows, pendingLicenses, approvedLicensesMonth, activeProjects, overdueProjects, upcomingProjects, strike, recentAudit, stackRows, employeesWithLatestLogs] = await Promise.all([
       this.prisma.employee.count({ where: { deletedAt: null } }),
       this.prisma.dependency.count({ where: { deletedAt: null, isActive: true } }),
       this.prisma.workLog.count({ where: { deletedAt: null, date: { gte: today, lt: tomorrow } } }),
-      this.prisma.user.count({ where: { deletedAt: null, role: 'EMPLOYEE', employee: { deletedAt: null } } }),
+      this.prisma.workLog.findMany({ where: { deletedAt: null, date: { gte: today, lt: tomorrow } }, distinct: ['employeeId'], select: { employeeId: true } }),
+      this.prisma.employee.findMany({
+        where: { deletedAt: null, user: { is: { role: 'EMPLOYEE', deletedAt: null } } },
+        select: { id: true, remoteDays: { where: { date: null }, select: { day: true } } },
+      }),
+      this.prisma.licenseRequest.findMany({
+        where: { deletedAt: null, status: 'APPROVED', article: { not: 'Guardia en Feria' }, startDate: { lte: today }, endDate: { gte: today } },
+        select: { employeeId: true, startDate: true, endDate: true, article: true },
+      }),
       this.prisma.licenseRequest.count({ where: { deletedAt: null, status: 'PENDING' } }),
       this.prisma.licenseRequest.count({ where: { deletedAt: null, status: 'APPROVED', updatedAt: { gte: monthStart } } }),
       this.prisma.project.count({ where: { deletedAt: null, status: { notIn: [ProjectStatus.COMPLETED, ProjectStatus.FINISHED, ProjectStatus.ARCHIVED] } } }),
@@ -108,10 +117,17 @@ export class DashboardService {
         orderBy: { name: 'asc' },
       }),
     ]);
+    const pendingIds = pendingWorkLogEmployeeIds({
+      date: todayKey,
+      strikeDate: strike?.nextDate,
+      employees: eligibleEmployees.map((employee) => ({ id: employee.id, remoteDays: employee.remoteDays.map((row) => row.day) })),
+      employeeIdsWithLogs: employeesWithLogsToday.map((row) => row.employeeId),
+      employeeIdsOnApprovedLeave: approvedLeaveEmployeeIdsForDate(approvedLeaveRows, today),
+    });
     const technologyCounts = new Map<string, number>();
     stackRows.flatMap((row) => (row.techStack || '').split(/[,;/|]+/)).map((value) => value.trim()).filter(Boolean).forEach((value) => technologyCounts.set(value, (technologyCounts.get(value) || 0) + 1));
     return {
-      employeesActive, dependenciesActive, workLogsToday, workLogsPendingToday: Math.max(0, expectedEmployees - workLogsToday), pendingLicenses,
+      employeesActive, dependenciesActive, workLogsToday, workLogsPendingToday: pendingIds.length, pendingLicenses,
       approvedLicensesMonth, activeProjects, overdueProjects, upcomingProjects,
       nextStrikeDuty: strike?.nextDate ? { date: strike.nextDate, employeeId: strike.nextCoverEmployeeId, notes: strike.notes } : null,
       technologies: [...technologyCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => ({ name, count })),

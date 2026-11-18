@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
@@ -10,6 +10,7 @@ export type AuditInput = {
 
 @Injectable()
 export class AuditService {
+  private readonly logger = new Logger(AuditService.name);
   constructor(private readonly prisma: PrismaService) {}
 
   async record(user: JwtUser | null | undefined, input: AuditInput) {
@@ -19,14 +20,17 @@ export class AuditService {
         entity: input.entityType || input.module, entityType: input.entityType, entityId: input.entityId,
         title: input.title, detail: input.detail, metadata: input.metadata,
       } });
-    } catch {
-      // La auditoría nunca debe interrumpir la operación principal.
+    } catch (error) {
+      this.logger.error(`Failed to persist audit event ${input.module}.${input.action}`, error instanceof Error ? error.stack : undefined);
     }
   }
 
   async findAll(query: Record<string, string>) {
     const page = Math.max(1, Number(query.page) || 1);
-    const pageSize = [10, 25, 50].includes(Number(query.pageSize)) ? Number(query.pageSize) : 10;
+    const configured = await this.prisma.systemSetting.findUnique({ where: { key: 'defaultPageSize' }, select: { value: true } });
+    const configuredSize = Number(configured?.value);
+    const fallbackSize = [10, 25, 50].includes(configuredSize) ? configuredSize : 10;
+    const pageSize = [10, 25, 50].includes(Number(query.pageSize)) ? Number(query.pageSize) : fallbackSize;
     const where: Prisma.AuditLogWhereInput = {};
     if (query.userId) where.userId = query.userId;
     if (query.employeeId) where.employeeId = query.employeeId;

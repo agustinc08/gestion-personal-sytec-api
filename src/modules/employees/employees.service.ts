@@ -181,7 +181,7 @@ export class EmployeesService {
     }
     await this.audit.record(user, { action: 'UPDATE_EMPLOYEE', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: dto.name || current.name, detail: user?.employeeId === id ? 'Perfil propio actualizado' : 'Empleado editado' });
     if (isAdmin && password) {
-      await this.audit.record(user, { action: 'RESET_EMPLOYEE_PASSWORD', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: dto.name || current.name, detail: 'Contraseña de agente actualizada por ADMIN' });
+      await this.audit.record(user, { action: 'RESET_EMPLOYEE_PASSWORD', module: 'EMPLOYEES', entityType: 'Employee', entityId: id, title: dto.name || current.name, detail: 'ContraseÃ±a de agente actualizada por ADMIN' });
     }
     return this.findOne(id, { id: '', cuil: '', email: '', role: Role.ADMIN });
   }
