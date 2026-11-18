@@ -19,10 +19,11 @@ import { SearchModule } from './modules/search/search.module';
 import { ExportsModule } from './modules/exports/exports.module';
 import { AnnouncementsModule } from './modules/announcements/announcements.module';
 import { SecondaryWorkItemsModule } from './modules/secondary-work-items/secondary-work-items.module';
+import { validateEnvironment } from './shared/env-validation';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }),
     PrismaModule,
     AuthModule,
     UsersModule,

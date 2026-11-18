@@ -13,12 +13,19 @@ export function getArgentinaTodayDateOnly(date = new Date()): string {
   return values.year + '-' + values.month + '-' + values.day;
 }
 
-export function parseDateOnlySafe(value?: string | Date | null): string {
+export function parseArgentinaDateOnly(value?: string | Date | null): string {
   if (!value) return '';
   if (value instanceof Date) return formatDateOnlyArgentina(value);
   const match = String(value).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  return match ? match[0] : '';
+  if (!match) return '';
+  const [, year, month, day] = match;
+  const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 12));
+  return parsed.getUTCFullYear() === Number(year) && parsed.getUTCMonth() + 1 === Number(month) && parsed.getUTCDate() === Number(day)
+    ? match[0]
+    : '';
 }
+
+export const parseDateOnlySafe = parseArgentinaDateOnly;
 
 export function dateOnlyToArgentinaDate(value?: string | Date | null): Date | undefined {
   const dateOnly = value instanceof Date ? formatDateOnlyArgentina(value) : parseDateOnlySafe(value);
@@ -27,25 +34,30 @@ export function dateOnlyToArgentinaDate(value?: string | Date | null): Date | un
   return new Date(Date.UTC(year, month - 1, day, ARGENTINA_UTC_OFFSET_HOURS, 0, 0, 0));
 }
 
-export function dateOnlyToArgentinaDayRange(value?: string | Date | null): { start: Date; end: Date } {
-  const dateOnly = value instanceof Date ? formatDateOnlyArgentina(value) : parseDateOnlySafe(value || getArgentinaTodayDateOnly());
+export function argentinaDayRange(value?: string | Date | null): { start: Date; end: Date } {
+  const dateOnly = value instanceof Date ? formatDateOnlyArgentina(value) : parseArgentinaDateOnly(value || getArgentinaTodayDateOnly());
   const [year, month, day] = dateOnly.split('-').map(Number);
-  const start = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+  const start = new Date(Date.UTC(year, month - 1, day, ARGENTINA_UTC_OFFSET_HOURS, 0, 0, 0));
   const end = new Date(Date.UTC(year, month - 1, day + 1, ARGENTINA_UTC_OFFSET_HOURS, 0, 0, 0));
   return { start, end };
 }
 
-export function monthRangeArgentina(yearValue?: string | number, monthValue?: string | number): { start: Date; end: Date; year: number; month: number } {
+export const dateOnlyToArgentinaDayRange = argentinaDayRange;
+
+export function argentinaMonthRange(yearValue?: string | number, monthValue?: string | number): { start: Date; end: Date; year: number; month: number } {
   const today = getArgentinaTodayDateOnly();
   const [currentYear, currentMonth] = today.split('-').map(Number);
   const year = Number(yearValue) || currentYear;
-  const month = monthValue ? Number(monthValue) : undefined;
+  const requestedMonth = Number(monthValue);
+  const month = requestedMonth >= 1 && requestedMonth <= 12 ? requestedMonth : undefined;
   const startMonth = month ? month - 1 : 0;
   const endMonth = month ? month : 12;
-  const start = new Date(Date.UTC(year, startMonth, 1, 0, 0, 0, 0));
+  const start = new Date(Date.UTC(year, startMonth, 1, ARGENTINA_UTC_OFFSET_HOURS, 0, 0, 0));
   const end = new Date(Date.UTC(year, endMonth, 1, ARGENTINA_UTC_OFFSET_HOURS, 0, 0, 0));
   return { start, end, year, month: month || currentMonth };
 }
+
+export const monthRangeArgentina = argentinaMonthRange;
 
 export function formatDateOnlyArgentina(value?: Date | string | null): string {
   if (!value) return '';
@@ -59,6 +71,12 @@ export function formatDateOnlyArgentina(value?: Date | string | null): string {
 
 export function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 86400000);
+}
+
+export function addDateOnlyDays(value: string, days: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  const result = new Date(Date.UTC(year, month - 1, day + days, 12));
+  return `${result.getUTCFullYear()}-${String(result.getUTCMonth() + 1).padStart(2, '0')}-${String(result.getUTCDate()).padStart(2, '0')}`;
 }
 
 export function argentinaYear(): number {

@@ -5,7 +5,6 @@ import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 
 const defaults = [
-  { key: 'officeName', value: 'Oficina de Sistemas y Tecnología', label: 'Nombre de la oficina', type: 'text' },
   { key: 'defaultPageSize', value: 10, label: 'Cantidad por página', type: 'number' },
   { key: 'strikeReminderDays', value: [7, 3, 1, 0], label: 'Días de recordatorio de guardias', type: 'json' },
   { key: 'projectAlertDays', value: 15, label: 'Días de alerta de proyectos', type: 'number' },

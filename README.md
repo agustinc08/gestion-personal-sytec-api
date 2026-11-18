@@ -30,6 +30,11 @@ Variables principales:
 - `ADMIN_CUIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`: admin inicial del seed.
 - `ADMIN_EMAIL`: email opcional, no se usa como login.
 
+## Operacion y limites
+
+- El limitador de login permite hasta 10 intentos fallidos por CUIL/IP durante 15 minutos. El estado vive en memoria: se reinicia al reiniciar la API y no se comparte entre réplicas; está pensado para una sola instancia.
+- Los certificados se escriben en `uploads/licenses` (en el contenedor, `/app/uploads/licenses`). El compose monta `/app/uploads` sobre el volumen Docker externo `gestion-personal-sytec-uploads-${ENV}`, por lo que el contenido sobrevive al recrear el contenedor y actualizar la imagen. La API sirve estáticamente sólo avatares y plantillas; los certificados se descargan por un endpoint autenticado.
+
 ## PostgreSQL Local
 
 Crear la base si no existe:

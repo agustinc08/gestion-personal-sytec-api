@@ -37,33 +37,48 @@ export class NotificationsService {
     const todayKey = this.dateKey(today);
     const notices: Notice[] = [];
     const strike = await this.prisma.strikeConfig.findUnique({ where: { id: 'default' } });
+    const settingRows = await this.prisma.systemSetting.findMany({ where: { key: { in: ['dailyWorklogReminderEnabled', 'licenseNotificationsEnabled', 'projectNotificationsEnabled', 'strikeReminderDays', 'projectAlertDays'] } }, select: { key: true, value: true } });
+    const settings = new Map(settingRows.map((row) => [row.key, row.value]));
+    const enabled = (key: string) => settings.get(key) !== false;
+    const configuredStrikeDays = settings.get('strikeReminderDays');
+    const strikeReminderDays = Array.isArray(configuredStrikeDays) && configuredStrikeDays.every((value) => Number.isInteger(value) && Number(value) >= 0)
+      ? configuredStrikeDays.map(Number)
+      : [7, 3, 1, 0];
+    const configuredProjectAlertDays = Number(settings.get('projectAlertDays'));
+    const projectAlertDays = Number.isInteger(configuredProjectAlertDays) && configuredProjectAlertDays >= 0 && configuredProjectAlertDays <= 365
+      ? configuredProjectAlertDays
+      : 15;
 
     if (user.role === Role.EMPLOYEE && user.employeeId) {
       const employee = await this.prisma.employee.findUnique({ where: { id: user.employeeId }, include: { remoteDays: { where: { date: null } } } });
       const workday = getWorkdayStatus({ date: todayKey, remoteDays: employee?.remoteDays.map((row) => row.day), strikeDate: strike?.nextDate });
       const workLog = await this.prisma.workLog.findFirst({ where: { employeeId: user.employeeId, deletedAt: null, date: { gte: today, lt: tomorrow } }, select: { id: true } });
-      if (!workLog && requiresWorkLog(workday)) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Parte diario pendiente', message: 'Todavía no cargaste tu parte diario de hoy.', link: '?seccion=parte-diario', key: `worklog:${todayKey}` });
+      if (enabled('dailyWorklogReminderEnabled') && !workLog && requiresWorkLog(workday)) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Parte diario pendiente', message: 'Todavía no cargaste tu parte diario de hoy.', link: '?seccion=parte-diario', key: `worklog:${todayKey}` });
 
-      const recentLicenses = await this.prisma.licenseRequest.findMany({ where: { employeeId: user.employeeId, deletedAt: null, status: { in: [LicenseStatus.APPROVED, LicenseStatus.REJECTED] }, updatedAt: { gte: new Date(today.getTime() - 30 * 86400000) } }, select: { id: true, status: true, updatedAt: true } });
-      recentLicenses.forEach((license) => notices.push({ type: 'LICENSE_STATUS_EMPLOYEE', title: license.status === LicenseStatus.APPROVED ? 'Licencia aprobada' : 'Licencia rechazada', message: `Tu solicitud de licencia fue ${license.status === LicenseStatus.APPROVED ? 'aprobada' : 'rechazada'}.`, link: '?seccion=licencias', key: `license:${license.id}:${license.status}` }));
+      if (enabled('licenseNotificationsEnabled')) {
+        const recentLicenses = await this.prisma.licenseRequest.findMany({ where: { employeeId: user.employeeId, deletedAt: null, status: { in: [LicenseStatus.APPROVED, LicenseStatus.REJECTED] }, updatedAt: { gte: new Date(today.getTime() - 30 * 86400000) } }, select: { id: true, status: true, updatedAt: true } });
+        recentLicenses.forEach((license) => notices.push({ type: 'LICENSE_STATUS_EMPLOYEE', title: license.status === LicenseStatus.APPROVED ? 'Licencia aprobada' : 'Licencia rechazada', message: `Tu solicitud de licencia fue ${license.status === LicenseStatus.APPROVED ? 'aprobada' : 'rechazada'}.`, link: '?seccion=licencias', key: `license:${license.id}:${license.status}` }));
+      }
     }
 
     if (user.role === Role.ADMIN) {
-      const [pendingLicenses, employeesWithLog, employees] = await Promise.all([
+      const [pendingLicenses, employeesWithLog, employees, approvedLeaveRows] = await Promise.all([
         this.prisma.licenseRequest.count({ where: { status: LicenseStatus.PENDING, deletedAt: null } }),
         this.prisma.workLog.findMany({ where: { deletedAt: null, date: { gte: today, lt: tomorrow } }, distinct: ['employeeId'], select: { employeeId: true } }),
         this.prisma.employee.findMany({ where: { deletedAt: null, user: { is: { role: Role.EMPLOYEE, deletedAt: null } } }, select: { id: true, remoteDays: { where: { date: null }, select: { day: true } } } }),
+        this.prisma.licenseRequest.findMany({ where: { deletedAt: null, status: LicenseStatus.APPROVED, article: { not: 'Guardia en Feria' }, startDate: { lte: today }, endDate: { gte: today } }, select: { employeeId: true } }),
       ]);
-      if (pendingLicenses) notices.push({ type: 'LICENSE_PENDING_ADMIN', title: 'Licencias pendientes', message: `Hay ${pendingLicenses} ${pendingLicenses === 1 ? 'solicitud de licencia esperando' : 'solicitudes de licencia esperando'} revisión.`, link: '?seccion=licencias', key: `licenses-pending:${todayKey}`, metadata: { count: pendingLicenses } });
+      if (enabled('licenseNotificationsEnabled') && pendingLicenses) notices.push({ type: 'LICENSE_PENDING_ADMIN', title: 'Licencias pendientes', message: `Hay ${pendingLicenses} ${pendingLicenses === 1 ? 'solicitud de licencia esperando' : 'solicitudes de licencia esperando'} revisión.`, link: '?seccion=licencias', key: `licenses-pending:${todayKey}`, metadata: { count: pendingLicenses } });
       const loggedIds = new Set(employeesWithLog.map((row) => row.employeeId));
-      const missing = employees.filter((employee) => requiresWorkLog(getWorkdayStatus({ date: todayKey, remoteDays: employee.remoteDays.map((row) => row.day), strikeDate: strike?.nextDate })) && !loggedIds.has(employee.id)).length;
-      if (missing) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Partes diarios pendientes', message: `Hay ${missing} ${missing === 1 ? 'agente' : 'agentes'} sin cargar el parte diario de hoy.`, link: '?seccion=asistencia', key: `admin-worklog:${todayKey}`, metadata: { count: missing } });
+      const employeesOnLeave = new Set(approvedLeaveRows.map((row) => row.employeeId));
+      const missing = employees.filter((employee) => requiresWorkLog(getWorkdayStatus({ date: todayKey, remoteDays: employee.remoteDays.map((row) => row.day), strikeDate: strike?.nextDate })) && !loggedIds.has(employee.id) && !employeesOnLeave.has(employee.id)).length;
+      if (enabled('dailyWorklogReminderEnabled') && missing) notices.push({ type: 'DAILY_WORKLOG_PENDING', title: 'Partes diarios pendientes', message: `Hay ${missing} ${missing === 1 ? 'agente' : 'agentes'} sin cargar el parte diario de hoy.`, link: '?seccion=asistencia', key: `admin-worklog:${todayKey}`, metadata: { count: missing } });
     }
 
     if (strike?.nextDate && strike.nextCoverEmployeeId) {
       const dutyDate = this.day(strike.nextDate);
       const days = Math.round((dutyDate.getTime() - today.getTime()) / 86400000);
-      if ([7, 3, 1, 0].includes(days) && (user.role === Role.ADMIN || user.employeeId === strike.nextCoverEmployeeId)) {
+      if (strikeReminderDays.includes(days) && (user.role === Role.ADMIN || user.employeeId === strike.nextCoverEmployeeId)) {
         const employee = await this.prisma.employee.findUnique({ where: { id: strike.nextCoverEmployeeId }, select: { name: true } });
         const formatted = dutyDate.toLocaleDateString('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
         const employeeMessage = days === 0 ? `Hoy te toca cubrir la guardia (${formatted}).` : days === 1 ? `Mañana te toca cubrir la guardia (${formatted}).` : `Te toca cubrir la guardia el ${formatted}.`;
@@ -71,8 +86,8 @@ export class NotificationsService {
       }
     }
 
-    const deadlineLimit = new Date(today); deadlineLimit.setDate(today.getDate() + 15);
-    const projects = await this.prisma.project.findMany({ where: { deletedAt: null, deadline: { not: null, lte: deadlineLimit }, ...(user.role === Role.EMPLOYEE ? { assignedEmployees: { some: { id: user.employeeId || '' } } } : {}) }, select: { id: true, name: true, deadline: true } });
+    const deadlineLimit = new Date(today); deadlineLimit.setDate(today.getDate() + projectAlertDays);
+    const projects = enabled('projectNotificationsEnabled') ? await this.prisma.project.findMany({ where: { deletedAt: null, deadline: { not: null, lte: deadlineLimit }, ...(user.role === Role.EMPLOYEE ? { assignedEmployees: { some: { id: user.employeeId || '' } } } : {}) }, select: { id: true, name: true, deadline: true } }) : [];
     projects.forEach((project) => {
       const deadline = this.day(project.deadline!);
       const days = Math.round((deadline.getTime() - today.getTime()) / 86400000);

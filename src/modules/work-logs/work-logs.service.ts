@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { toActivityType, toDate, toWorkLogMode, workLogToDto } from '../../shared/mappers';
 import { dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina } from '../../shared/date-utils';
@@ -10,10 +10,20 @@ import { SaveDailyAttendanceDto } from './dto/save-daily-attendance.dto';
 import { AuditService } from '../audit/audit.service';
 import { SecondaryWorkItemsService } from '../secondary-work-items/secondary-work-items.service';
 import { getWorkdayStatus } from '../../shared/workday';
+import { getConfiguredPageSize, paginate, paginationRequested } from '../../shared/pagination';
 
 @Injectable()
 export class WorkLogsService {
   constructor(private prisma: PrismaService, private audit: AuditService, private secondaryWorkItems: SecondaryWorkItemsService) {}
+
+  private async assertProjectAccess(projectId: string | null | undefined, user: JwtUser) {
+    if (!projectId || user.role === Role.ADMIN) return;
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null, assignedEmployees: { some: { id: user.employeeId || '' } } },
+      select: { id: true },
+    });
+    if (!project) throw new ForbiddenException('No estás asignado a este proyecto');
+  }
 
   private validateTimes(entryTime?: string, exitTime?: string) {
     if (entryTime && exitTime && exitTime < entryTime) {
@@ -28,6 +38,8 @@ export class WorkLogsService {
     if (query.secondaryWorkItemId) where.secondaryWorkItemId = query.secondaryWorkItemId;
     if (query.activityType) where.activityType = toActivityType(query.activityType);
     if (query.mode) where.mode = toWorkLogMode(query.mode);
+    if (query.from || query.to) where.date = { ...(where.date || {}), ...(query.from ? { gte: dateOnlyToArgentinaDayRange(query.from).start } : {}), ...(query.to ? { lt: dateOnlyToArgentinaDayRange(query.to).end } : {}) };
+    if (query.status === 'active') where.deletedAt = null;
     if (query.year) {
       const { start, end } = monthRangeArgentina(query.year, query.month);
       where.date = { gte: start, lt: end };
@@ -36,10 +48,15 @@ export class WorkLogsService {
   }
 
   async findAll(query: Record<string, string> = {}) {
-    return (await this.prisma.workLog.findMany({ where: this.where(query), include: { project: true, secondaryWorkItem: true }, orderBy: { date: 'desc' } })).map(workLogToDto);
+    return this.findWorkLogs(this.where(query), query);
   }
   async findMine(user: JwtUser, query: Record<string, string> = {}) {
-    return (await this.prisma.workLog.findMany({ where: this.where(query, user.employeeId || ''), include: { project: true, secondaryWorkItem: true }, orderBy: { date: 'desc' } })).map(workLogToDto);
+    return this.findWorkLogs(this.where(query, user.employeeId || ''), query);
+  }
+  private async findWorkLogs(where: any, query: Record<string, string>) {
+    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.workLog.findMany({ where, include: { project: true, secondaryWorkItem: true }, orderBy: { date: 'desc' }, ...(options || {}) })).map(workLogToDto);
+    if (!paginationRequested(query)) return fetch();
+    return paginate(query, await getConfiguredPageSize(this.prisma), (options) => fetch(options), () => this.prisma.workLog.count({ where }));
   }
   private async resolveSecondaryWorkItem(dto: { projectId?: string; secondaryWorkItemId?: string; secondaryWorkItemName?: string; title?: string }, employeeId?: string | null) {
     if (dto.projectId) return null;
@@ -53,6 +70,7 @@ export class WorkLogsService {
     const employeeId = user.role === Role.ADMIN && dto.employeeId ? dto.employeeId : user.employeeId;
     if (!employeeId) throw new ForbiddenException();
     const date = toDate(dto.date)!;
+    await this.assertProjectAccess(dto.projectId, user);
     this.validateTimes(dto.entryTime, dto.exitTime);
     let mode = toWorkLogMode(dto.mode);
     if (user.role !== Role.ADMIN && formatDateOnlyArgentina(date) >= getArgentinaTodayDateOnly()) {
@@ -89,11 +107,15 @@ export class WorkLogsService {
     const current = await this.prisma.workLog.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException();
     if (user.role !== Role.ADMIN && current.employeeId !== user.employeeId) throw new ForbiddenException();
+    if (user.role === Role.ADMIN && formatDateOnlyArgentina(current.date) < getArgentinaTodayDateOnly() && !dto.reason?.trim()) {
+      throw new BadRequestException('Indicá el motivo para modificar un parte histórico');
+    }
     const date = dto.date ? toDate(dto.date)! : current.date;
     const nextEntryTime = dto.entryTime === undefined ? current.entryTime || undefined : dto.entryTime || undefined;
     const nextExitTime = dto.exitTime === undefined ? current.exitTime || undefined : dto.exitTime || undefined;
     this.validateTimes(nextEntryTime, nextExitTime);
     const nextProjectId = dto.projectId === undefined ? current.projectId : dto.projectId || null;
+    await this.assertProjectAccess(nextProjectId, user);
     const secondaryWorkItem = nextProjectId ? null : await this.resolveSecondaryWorkItem({ ...dto, projectId: nextProjectId || undefined, title: dto.title || current.title }, current.employeeId);
     const nextSecondaryWorkItemId = nextProjectId ? null : (secondaryWorkItem?.id ?? (dto.secondaryWorkItemId === '' ? null : dto.secondaryWorkItemId ?? current.secondaryWorkItemId));
     const updated = await this.prisma.workLog.update({
@@ -113,7 +135,7 @@ export class WorkLogsService {
       include: { project: true, secondaryWorkItem: true },
     });
     if (updated.secondaryWorkItemId) await this.secondaryWorkItems.touch(updated.secondaryWorkItemId, updated.updatedAt || updated.date);
-    await this.audit.record(user, { action: 'UPDATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: updated.title, detail: 'Parte diario editado' });
+    await this.audit.record(user, { action: 'UPDATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: updated.title, detail: dto.reason?.trim() || 'Parte diario editado', metadata: { reason: dto.reason?.trim() || null, before: { employeeId: current.employeeId, date: formatDateOnlyArgentina(current.date), title: current.title, description: current.description, projectId: current.projectId, mode: current.mode, hours: current.hours }, after: { employeeId: updated.employeeId, date: formatDateOnlyArgentina(updated.date), title: updated.title, description: updated.description, projectId: updated.projectId, mode: updated.mode, hours: updated.hours } } });
     return workLogToDto(updated);
   }
   private attendanceToDto(row: any) {
@@ -139,7 +161,9 @@ export class WorkLogsService {
       const { start, end } = monthRangeArgentina(query.year, query.month);
       where.date = { gte: start, lt: end };
     }
-    return (await this.prisma.dailyAttendance.findMany({ where, orderBy: { date: 'desc' } })).map((row) => this.attendanceToDto(row));
+    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.dailyAttendance.findMany({ where, orderBy: { date: 'desc' }, ...(options || {}) })).map((row) => this.attendanceToDto(row));
+    if (!paginationRequested(query)) return fetch();
+    return paginate(query, await getConfiguredPageSize(this.prisma), (options) => fetch(options), () => this.prisma.dailyAttendance.count({ where }));
   }
 
   async saveAttendance(dto: SaveDailyAttendanceDto, user: JwtUser) {
@@ -155,11 +179,15 @@ export class WorkLogsService {
     await this.audit.record(user, { action: 'UPSERT_ATTENDANCE', module: 'WORK_LOGS', entityType: 'DailyAttendance', entityId: saved.id, title: 'Horario de jornada actualizado' });
     return this.attendanceToDto(saved);
   }
-  async remove(id: string, user: JwtUser) {
-    const current = await this.prisma.workLog.findUnique({ where: { id } });
+  async remove(id: string, user: JwtUser, reason?: string) {
+    const current = await this.prisma.workLog.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException();
     if (user.role !== Role.ADMIN && current.employeeId !== user.employeeId) throw new ForbiddenException();
+    if (user.role === Role.ADMIN && formatDateOnlyArgentina(current.date) < getArgentinaTodayDateOnly() && !reason?.trim()) {
+      throw new BadRequestException('Indicá el motivo para eliminar un parte histórico');
+    }
     await this.prisma.workLog.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.audit.record(user, { action: 'DELETE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: current.title, detail: reason?.trim() || 'Parte diario eliminado', metadata: { reason: reason?.trim() || null, before: { employeeId: current.employeeId, date: formatDateOnlyArgentina(current.date), title: current.title, description: current.description, projectId: current.projectId, mode: current.mode, hours: current.hours } } });
     return { status: 'success' };
   }
 }

@@ -6,13 +6,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { AuditService } from '../audit/audit.service';
+import { LoginRateLimitService } from '../../shared/env-validation';
 
 @Injectable()
 export class AuthService {
-  constructor(private prisma: PrismaService, private jwt: JwtService, private audit: AuditService) {}
+  constructor(private prisma: PrismaService, private jwt: JwtService, private audit: AuditService, private rateLimit: LoginRateLimitService) {}
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, ip = 'unknown') {
     const cleanCuil = dto.cuil.replace(/\D/g, '');
+    this.rateLimit.assertAllowed(ip, cleanCuil);
     let user;
 
     try {
@@ -34,6 +36,7 @@ export class AuthService {
     }
 
     if (!user) {
+      this.rateLimit.registerFailure(ip, cleanCuil);
       await this.audit.record(null, {
         action: 'LOGIN_FAILED',
         module: 'AUTH',
@@ -46,6 +49,7 @@ export class AuthService {
 
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) {
+      this.rateLimit.registerFailure(ip, cleanCuil);
       await this.audit.record(
         { id: user.id, cuil: user.cuil, email: user.email, role: user.role, employeeId: user.employeeId },
         {
@@ -59,6 +63,8 @@ export class AuthService {
       );
       throw new UnauthorizedException('Credenciales inválidas');
     }
+
+    this.rateLimit.registerSuccess(ip, cleanCuil);
 
     await this.audit.record(
       { id: user.id, cuil: user.cuil, email: user.email, role: user.role, employeeId: user.employeeId },

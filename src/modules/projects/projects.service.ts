@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DeployEnvironment, DeployStatus, Role } from '@prisma/client';
-import { deploymentToDto, projectToDto, toDate, toProjectDifficulty, toProjectStatus } from '../../shared/mappers';
+import { deploymentToDto, fromProjectStatus, projectToDto, toDate, toProjectDifficulty, toProjectStatus } from '../../shared/mappers';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDeploymentDto } from './dto/create-deployment.dto';
@@ -9,6 +9,8 @@ import { CreateProjectUpdateDto } from './dto/create-project-update.dto';
 import { UpdateDeploymentDto } from './dto/update-deployment.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { AuditService } from '../audit/audit.service';
+import { getConfiguredPageSize, paginate, paginationRequested } from '../../shared/pagination';
+import { addDateOnlyDays, dateOnlyToArgentinaDayRange, getArgentinaTodayDateOnly } from '../../shared/date-utils';
 
 const projectInclude = {
   assignedEmployees: true,
@@ -61,18 +63,66 @@ export class ProjectsService {
     if (query.year) where.year = Number(query.year);
     if (query.status) where.status = toProjectStatus(query.status);
     if (query.difficulty) where.difficulty = toProjectDifficulty(query.difficulty);
-    if (query.ownerId) where.ownerId = query.ownerId;
-    if (query.needsRedesign !== undefined) where.needsRedesign = query.needsRedesign === 'true';
-    if (query.needsRework !== undefined) where.needsRework = query.needsRework === 'true';
+    if (query.ownerId === 'none') where.ownerId = null;
+    else if (query.ownerId) where.ownerId = query.ownerId;
+    const addAnd = (condition: any) => { where.AND = [...(where.AND || []), condition]; };
+    if (query.needsRedesign === 'true') addAnd({ OR: [{ needsRedesign: true }, { status: toProjectStatus('necesita_rediseno') }] });
+    if (query.needsRedesign === 'false') addAnd({ needsRedesign: false, status: { not: toProjectStatus('necesita_rediseno') } });
+    if (query.needsRework === 'true') addAnd({ OR: [{ needsRework: true }, { status: toProjectStatus('necesita_rehacer') }] });
+    if (query.needsRework === 'false') addAnd({ needsRework: false, status: { not: toProjectStatus('necesita_rehacer') } });
     if (query.assignedEmployeeId) where.assignedEmployees = { some: { id: query.assignedEmployeeId } };
     if (query.q) where.name = { contains: String(query.q), mode: 'insensitive' };
+    if (query.from || query.to) where.createdAt = { ...(query.from ? { gte: dateOnlyToArgentinaDayRange(query.from).start } : {}), ...(query.to ? { lt: dateOnlyToArgentinaDayRange(query.to).end } : {}) };
+    const lifecycleStatus = query.lifecycle === 'active'
+      ? { in: ['ACTIVE', 'PENDING', 'IN_PROGRESS', 'PAUSED', 'IN_REVIEW', 'READY_FOR_GIT', 'IN_DEV_BRANCH', 'READY_FOR_DOCKER', 'DOCKERIZED', 'DEPLOYED', 'NEEDS_REWORK', 'NEEDS_REDESIGN'] }
+      : query.lifecycle === 'completed' ? { in: ['COMPLETED', 'FINISHED'] }
+        : query.lifecycle === 'archived' ? 'ARCHIVED' : undefined;
+    if (lifecycleStatus !== undefined) {
+      if (query.status) addAnd({ status: lifecycleStatus });
+      else where.status = lifecycleStatus;
+    }
+    if (query.deadlineStatus) {
+      const today = getArgentinaTodayDateOnly();
+      const todayRange = dateOnlyToArgentinaDayRange(today);
+      const weekEnd = addDateOnlyDays(today, 7);
+      const twoWeekEnd = addDateOnlyDays(today, 15);
+      const weekEndRange = dateOnlyToArgentinaDayRange(weekEnd);
+      const twoWeekEndRange = dateOnlyToArgentinaDayRange(twoWeekEnd);
+      if (query.deadlineStatus === 'sin_fecha') where.deadline = null;
+      if (query.deadlineStatus === 'vencido') where.deadline = { lt: todayRange.start };
+      if (query.deadlineStatus === 'vence_hoy') where.deadline = { gte: todayRange.start, lt: todayRange.end };
+      if (query.deadlineStatus === 'esta_semana') where.deadline = { gte: todayRange.end, lt: weekEndRange.end };
+      if (query.deadlineStatus === 'proximo') where.deadline = { gte: weekEndRange.end, lt: twoWeekEndRange.end };
+    }
+    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.project.findMany({ where, include: projectInclude, orderBy: [{ year: 'desc' }, { updatedAt: 'desc' }], ...(options || {}) })).map(projectToDto);
+    if (!paginationRequested(query)) return (await fetch()).sort((a: any, b: any) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
+    return paginate(query, await getConfiguredPageSize(this.prisma), fetch, () => this.prisma.project.count({ where }));
+  }
 
-    const projects = await this.prisma.project.findMany({
-      where,
-      include: projectInclude,
-      orderBy: [{ year: 'desc' }, { updatedAt: 'desc' }],
+  async findOptions(user: JwtUser) {
+    const rows = await this.prisma.project.findMany({
+      where: { deletedAt: null, ...this.accessWhere(user) },
+      select: {
+        id: true, name: true, status: true, year: true, deadline: true, ownerId: true,
+        assignedEmployees: { select: { id: true } },
+        _count: { select: { workLogs: { where: { deletedAt: null } } } },
+      },
+      orderBy: [{ year: 'desc' }, { name: 'asc' }],
     });
-    return projects.map(projectToDto).sort((a: any, b: any) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
+    return rows.map((project) => ({
+      id: project.id,
+      name: project.name,
+      description: '',
+      requesterDependency: '',
+      assignedEmployeeIds: project.assignedEmployees.map((employee) => employee.id),
+      status: fromProjectStatus(project.status),
+      ownerId: project.ownerId || '',
+      year: project.year,
+      deadline: project.deadline,
+      workLogsCount: project._count.workLogs,
+      updates: [],
+      deployments: [],
+    }));
   }
 
   async findOne(id: string, user: JwtUser) {
@@ -267,17 +317,15 @@ export class ProjectsService {
   }
 
   async deadlines(user: JwtUser) {
-    const projects = await this.findAll(user);
-    const today = new Date();
-    const in7 = new Date(today.getTime() + 7 * 86400000);
-    const in15 = new Date(today.getTime() + 15 * 86400000);
+    const result = await this.findAll(user);
+    const projects = Array.isArray(result) ? result : result.items;
+    const today = getArgentinaTodayDateOnly();
+    const in7 = addDateOnlyDays(today, 7);
+    const in15 = addDateOnlyDays(today, 15);
 
     return projects.map((project: any) => {
-      const deadline = project.deadline ? new Date(`${project.deadline}T00:00:00`) : null;
-      return {
-        ...project,
-        deadlineStatus: !deadline ? 'sin_fecha' : deadline < today ? 'vencido' : deadline <= in7 ? 'esta_semana' : deadline <= in15 ? 'proximo' : 'en_termino',
-      };
+      const deadline = project.deadline ? String(project.deadline).slice(0, 10) : '';
+      return { ...project, deadlineStatus: !deadline ? 'sin_fecha' : deadline < today ? 'vencido' : deadline <= in7 ? 'esta_semana' : deadline <= in15 ? 'proximo' : 'en_termino' };
     });
   }
 

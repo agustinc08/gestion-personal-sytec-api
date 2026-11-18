@@ -1,5 +1,6 @@
 ﻿import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import { Query } from '@nestjs/common';
 import { CurrentUser, JwtUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -13,8 +14,9 @@ import { SecondaryWorkItemsService } from './secondary-work-items.service';
 export class SecondaryWorkItemsController {
   constructor(private readonly items: SecondaryWorkItemsService) {}
 
-  @Get() findAll() { return this.items.findAll(); }
+  @Get() findAll(@CurrentUser() user: JwtUser, @Query() query: Record<string, string>) { return this.items.findAll(user, query); }
+  @Get('options') options(@CurrentUser() user: JwtUser) { return this.items.findOptions(user); }
   @Post() create(@Body() dto: CreateSecondaryWorkItemDto, @CurrentUser() user: JwtUser) { return this.items.create(dto, user); }
   @Patch(':id') @Roles(Role.ADMIN) update(@Param('id') id: string, @Body() dto: UpdateSecondaryWorkItemDto, @CurrentUser() user: JwtUser) { return this.items.update(id, dto, user); }
-  @Get(':id/work-logs') workLogs(@Param('id') id: string) { return this.items.workLogs(id); }
+  @Get(':id/work-logs') workLogs(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.items.workLogs(id, user); }
 }

@@ -5,6 +5,7 @@ import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { workLogToDto } from '../../shared/mappers';
 import { CreateSecondaryWorkItemDto } from './dto/create-secondary-work-item.dto';
 import { UpdateSecondaryWorkItemDto } from './dto/update-secondary-work-item.dto';
+import { getConfiguredPageSize, paginate, paginationRequested } from '../../shared/pagination';
 
 export function normalizeSecondaryWorkItemName(value?: string | null) {
   return (value || '')
@@ -45,11 +46,12 @@ export class SecondaryWorkItemsService {
     };
   }
 
-  includeSummary() {
+  includeSummary(employeeId?: string) {
+    const workLogWhere = { deletedAt: null, ...(employeeId !== undefined ? { employeeId } : {}) };
     return {
-      _count: { select: { workLogs: true } },
+      _count: { select: { workLogs: { where: workLogWhere } } },
       workLogs: {
-        where: { deletedAt: null },
+        where: workLogWhere,
         include: { employee: true, project: true },
         orderBy: [{ date: 'desc' as const }, { updatedAt: 'desc' as const }],
         take: 25,
@@ -57,9 +59,25 @@ export class SecondaryWorkItemsService {
     };
   }
 
-  async findAll() {
-    const rows = await this.prisma.secondaryWorkItem.findMany({ include: this.includeSummary() });
-    return rows.map((row) => this.toDto(row)).sort((a, b) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
+  async findAll(user: JwtUser, query: Record<string, string> = {}) {
+    const employeeId = user.role === Role.EMPLOYEE ? user.employeeId || '' : undefined;
+    const where: any = user.role === Role.EMPLOYEE ? { workLogs: { some: { employeeId, deletedAt: null } } } : {};
+    if (query.q?.trim()) where.name = { contains: query.q.trim(), mode: 'insensitive' };
+    if (query.status) where.status = query.status;
+    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.secondaryWorkItem.findMany({ where, include: this.includeSummary(employeeId), orderBy: { updatedAt: 'desc' }, ...(options || {}) })).map((row) => this.toDto(row));
+    if (!paginationRequested(query)) return (await fetch()).sort((a, b) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
+    return paginate(query, await getConfiguredPageSize(this.prisma), fetch, () => this.prisma.secondaryWorkItem.count({ where }));
+  }
+
+  async findOptions(user: JwtUser) {
+    const employeeId = user.role === Role.EMPLOYEE ? user.employeeId || '' : undefined;
+    const where = employeeId ? { workLogs: { some: { employeeId, deletedAt: null } } } : {};
+    const rows = await this.prisma.secondaryWorkItem.findMany({
+      where,
+      select: { id: true, name: true, status: true },
+      orderBy: { name: 'asc' },
+    });
+    return rows.map((row) => ({ id: row.id, name: row.name, status: row.status }));
   }
 
   async findOrCreateByName(name: string, employeeId?: string | null) {
@@ -73,10 +91,12 @@ export class SecondaryWorkItemsService {
 
   async create(dto: CreateSecondaryWorkItemDto, user: JwtUser) {
     const item = await this.findOrCreateByName(dto.name, user.employeeId);
-    if (dto.description !== undefined) {
+    if (dto.description !== undefined && user.role === Role.ADMIN) {
       return this.toDto(await this.prisma.secondaryWorkItem.update({ where: { id: item.id }, data: { description: dto.description || null }, include: this.includeSummary() }));
     }
-    return this.toDto(await this.prisma.secondaryWorkItem.findUniqueOrThrow({ where: { id: item.id }, include: this.includeSummary() }));
+    const visibleLogs = user.role === Role.EMPLOYEE ? { workLogs: { some: { employeeId: user.employeeId || '', deletedAt: null } } } : {};
+    const visibleItem = await this.prisma.secondaryWorkItem.findFirst({ where: { id: item.id, ...visibleLogs }, include: this.includeSummary(user.role === Role.EMPLOYEE ? user.employeeId || '' : undefined) });
+    return visibleItem ? this.toDto(visibleItem) : { id: item.id, name: item.name, status: item.status, workLogsCount: 0, employeeNames: [], employeeIds: [] };
   }
 
   async update(id: string, dto: UpdateSecondaryWorkItemDto, user: JwtUser) {
@@ -99,9 +119,13 @@ export class SecondaryWorkItemsService {
     await this.prisma.secondaryWorkItem.update({ where: { id }, data: { lastActivityAt: date } });
   }
 
-  async workLogs(id: string) {
+  async workLogs(id: string, user: JwtUser) {
     const item = await this.prisma.secondaryWorkItem.findUnique({ where: { id } });
     if (!item) throw new NotFoundException('Carga secundaria no encontrada');
-    return (await this.prisma.workLog.findMany({ where: { secondaryWorkItemId: id, deletedAt: null }, include: { project: true, secondaryWorkItem: true }, orderBy: [{ date: 'desc' }, { updatedAt: 'desc' }] })).map(workLogToDto);
+    const employeeId = user.role === Role.EMPLOYEE ? user.employeeId || '' : undefined;
+    const where = { secondaryWorkItemId: id, deletedAt: null, ...(employeeId ? { employeeId } : {}) };
+    const logs = await this.prisma.workLog.findMany({ where, include: { project: true, secondaryWorkItem: true }, orderBy: [{ date: 'desc' }, { updatedAt: 'desc' }] });
+    if (user.role === Role.EMPLOYEE && logs.length === 0) throw new NotFoundException('Carga secundaria no encontrada');
+    return logs.map(workLogToDto);
   }
 }

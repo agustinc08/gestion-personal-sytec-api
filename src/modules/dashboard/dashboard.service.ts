@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { ProjectStatus } from '@prisma/client';
-import { addDays, dateOnlyToArgentinaDate, dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina } from '../../shared/date-utils';
-import { fromWorkLogMode } from '../../shared/mappers';
+import { LicenseStatus, ProjectStatus } from '@prisma/client';
+import { addDateOnlyDays, addDays, dateOnlyToArgentinaDate, dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina } from '../../shared/date-utils';
+import { fromWorkLogMode, workLogToDto } from '../../shared/mappers';
+import { pendingWorkLogEmployeeIds, approvedLeaveEmployeeIdsForDate } from '../../shared/worklog-pending';
+import { resolveEmployeeCalendarDay } from '../../shared/calendar-day';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -74,11 +76,19 @@ export class DashboardService {
     const [summaryYear, summaryMonth] = todayKey.split('-').map(Number);
     const monthStart = monthRangeArgentina(summaryYear, summaryMonth).start;
     const alertLimit = addDays(today, 15);
-    const [employeesActive, dependenciesActive, workLogsToday, expectedEmployees, pendingLicenses, approvedLicensesMonth, activeProjects, overdueProjects, upcomingProjects, strike, recentAudit, stackRows, employeesWithLatestLogs] = await Promise.all([
+    const [employeesActive, dependenciesActive, workLogsToday, employeesWithLogsToday, eligibleEmployees, approvedLeaveRows, pendingLicenses, approvedLicensesMonth, activeProjects, overdueProjects, upcomingProjects, strike, recentAudit, stackRows, employeesWithLatestLogs] = await Promise.all([
       this.prisma.employee.count({ where: { deletedAt: null } }),
       this.prisma.dependency.count({ where: { deletedAt: null, isActive: true } }),
       this.prisma.workLog.count({ where: { deletedAt: null, date: { gte: today, lt: tomorrow } } }),
-      this.prisma.user.count({ where: { deletedAt: null, role: 'EMPLOYEE', employee: { deletedAt: null } } }),
+      this.prisma.workLog.findMany({ where: { deletedAt: null, date: { gte: today, lt: tomorrow } }, distinct: ['employeeId'], select: { employeeId: true } }),
+      this.prisma.employee.findMany({
+        where: { deletedAt: null, user: { is: { role: 'EMPLOYEE', deletedAt: null } } },
+        select: { id: true, name: true, dependency: true, dependencyRef: { select: { name: true } }, position: true, remoteDays: { where: { date: null }, select: { day: true } } },
+      }),
+      this.prisma.licenseRequest.findMany({
+        where: { deletedAt: null, status: 'APPROVED', article: { not: 'Guardia en Feria' }, startDate: { lte: today }, endDate: { gte: today } },
+        select: { employeeId: true, startDate: true, endDate: true, article: true },
+      }),
       this.prisma.licenseRequest.count({ where: { deletedAt: null, status: 'PENDING' } }),
       this.prisma.licenseRequest.count({ where: { deletedAt: null, status: 'APPROVED', updatedAt: { gte: monthStart } } }),
       this.prisma.project.count({ where: { deletedAt: null, status: { notIn: [ProjectStatus.COMPLETED, ProjectStatus.FINISHED, ProjectStatus.ARCHIVED] } } }),
@@ -108,11 +118,43 @@ export class DashboardService {
         orderBy: { name: 'asc' },
       }),
     ]);
+    const pendingIds = pendingWorkLogEmployeeIds({
+      date: todayKey,
+      strikeDate: strike?.nextDate,
+      employees: eligibleEmployees.map((employee) => ({ id: employee.id, remoteDays: employee.remoteDays.map((row) => row.day) })),
+      employeeIdsWithLogs: employeesWithLogsToday.map((row) => row.employeeId),
+      employeeIdsOnApprovedLeave: approvedLeaveEmployeeIdsForDate(approvedLeaveRows, today),
+    });
     const technologyCounts = new Map<string, number>();
     stackRows.flatMap((row) => (row.techStack || '').split(/[,;/|]+/)).map((value) => value.trim()).filter(Boolean).forEach((value) => technologyCounts.set(value, (technologyCounts.get(value) || 0) + 1));
+    const in7 = addDays(today, 7);
+    const in15 = addDays(today, 15);
+    const [projectStatusGroups, projectsNeedRedesign, projectsNeedRework, dueTodayProjects, dueThisWeekProjects, dueIn15DaysProjects, projectsWithoutDeadline, projectsWithoutOwner] = await Promise.all([
+      this.prisma.project.groupBy({ by: ['status'], where: { deletedAt: null }, _count: { _all: true } }),
+      this.prisma.project.count({ where: { deletedAt: null, OR: [{ status: ProjectStatus.NEEDS_REDESIGN }, { needsRedesign: true }] } }),
+      this.prisma.project.count({ where: { deletedAt: null, OR: [{ status: ProjectStatus.NEEDS_REWORK }, { needsRework: true }] } }),
+      this.prisma.project.count({ where: { deletedAt: null, deadline: { gte: today, lt: tomorrow } } }),
+      this.prisma.project.count({ where: { deletedAt: null, deadline: { gte: today, lte: in7 } } }),
+      this.prisma.project.count({ where: { deletedAt: null, deadline: { gt: in7, lte: in15 } } }),
+      this.prisma.project.count({ where: { deletedAt: null, deadline: null } }),
+      this.prisma.project.count({ where: { deletedAt: null, ownerId: null } }),
+    ]);
+    const projectCounts = new Map(projectStatusGroups.map((row) => [row.status, row._count._all]));
+    const projectsTotal = [...projectCounts.values()].reduce((total, count) => total + count, 0);
+    const projectsInDevelopment = projectCounts.get(ProjectStatus.IN_PROGRESS) || 0;
+    const projectsReadyForGit = projectCounts.get(ProjectStatus.READY_FOR_GIT) || 0;
+    const projectsReadyForDocker = projectCounts.get(ProjectStatus.READY_FOR_DOCKER) || 0;
+    const projectsDeployed = projectCounts.get(ProjectStatus.DEPLOYED) || 0;
+    const projectsFinished = (projectCounts.get(ProjectStatus.COMPLETED) || 0) + (projectCounts.get(ProjectStatus.FINISHED) || 0);
+    const pendingEmployeeIds = new Set(pendingIds);
     return {
-      employeesActive, dependenciesActive, workLogsToday, workLogsPendingToday: Math.max(0, expectedEmployees - workLogsToday), pendingLicenses,
+      employeesActive, dependenciesActive, workLogsToday, workLogsPendingToday: pendingIds.length, pendingLicenses,
       approvedLicensesMonth, activeProjects, overdueProjects, upcomingProjects,
+      projectsTotal, projectsInDevelopment, projectsReadyForGit, projectsReadyForDocker, projectsDeployed, projectsFinished,
+      projectsNeedRedesign, projectsNeedRework, dueTodayProjects, dueThisWeekProjects, dueIn15DaysProjects, projectsWithoutDeadline, projectsWithoutOwner,
+      pendingWorkLogEmployees: eligibleEmployees.filter((employee) => pendingEmployeeIds.has(employee.id)).map((employee) => ({
+        id: employee.id, name: employee.name, dependency: employee.dependencyRef?.name || employee.dependency, position: employee.position,
+      })),
       nextStrikeDuty: strike?.nextDate ? { date: strike.nextDate, employeeId: strike.nextCoverEmployeeId, notes: strike.notes } : null,
       technologies: [...technologyCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, count]) => ({ name, count })),
       latestWorkLogsByEmployee: employeesWithLatestLogs.map((employee) => {
@@ -159,7 +201,9 @@ export class DashboardService {
   }
   async employee(employeeId?: string | null) {
     if (!employeeId) return {};
-    const [licenses, workLogs, projects] = await Promise.all([
+    const todayKey = getArgentinaTodayDateOnly();
+    const { start: todayStart, end: tomorrow } = dateOnlyToArgentinaDayRange(todayKey);
+    const [licenses, workLogs, projects, workLogToday, approvedLeaveToday, recentRows] = await Promise.all([
       this.prisma.licenseRequest.count({ where: { employeeId, deletedAt: null } }),
       this.prisma.workLog.count({ where: { employeeId, deletedAt: null } }),
       this.prisma.project.findMany({
@@ -167,21 +211,31 @@ export class DashboardService {
         select: { id: true, name: true, status: true, year: true, difficulty: true, deadline: true, updatedAt: true },
         orderBy: [{ deadline: 'asc' }, { updatedAt: 'desc' }],
       }),
+      this.prisma.workLog.findFirst({ where: { employeeId, deletedAt: null, date: { gte: todayStart, lt: tomorrow } }, select: { id: true } }),
+      this.prisma.licenseRequest.findFirst({ where: { employeeId, deletedAt: null, status: LicenseStatus.APPROVED, article: { not: 'Guardia en Feria' }, startDate: { lte: todayStart }, endDate: { gte: todayStart } }, select: { id: true } }),
+      this.prisma.workLog.findMany({
+        where: { employeeId, deletedAt: null },
+        include: { project: { select: { id: true, name: true } }, secondaryWorkItem: { select: { id: true, name: true } } },
+        orderBy: [{ date: 'desc' }, { updatedAt: 'desc' }], take: 10,
+      }),
     ]);
-    const today = new Date();
-    const in15 = new Date(today.getTime() + 15 * 86400000);
+    const today = getArgentinaTodayDateOnly();
+    const in15 = addDateOnlyDays(today, 15);
     return {
       licenses,
       workLogs,
+      workLogToday: Boolean(workLogToday),
+      approvedLeaveToday: Boolean(approvedLeaveToday),
+      recentWorkLogs: recentRows.map(workLogToDto),
       projects: projects.map((project) => ({
         ...project,
-        deadlineStatus: !project.deadline ? 'sin_fecha' : project.deadline < today ? 'vencido' : project.deadline <= in15 ? 'proximo' : 'en_termino',
+        deadlineStatus: !project.deadline ? 'sin_fecha' : formatDateOnlyArgentina(project.deadline) < today ? 'vencido' : formatDateOnlyArgentina(project.deadline) <= in15 ? 'proximo' : 'en_termino',
       })),
     };
   }
   async adminWorklogCalendar(query: Record<string, string>) {
     const { start, end, year, month } = monthRangeArgentina(query.year, query.month);
-    const [logs, attendances, employees] = await Promise.all([
+    const [logs, attendances, employees, approvedLicenses, strike] = await Promise.all([
       this.prisma.workLog.findMany({
         where: { deletedAt: null, date: { gte: start, lt: end } },
         include: { employee: { include: { dependencyRef: true } }, project: { select: { id: true, name: true } }, secondaryWorkItem: { select: { id: true, name: true } } },
@@ -194,12 +248,36 @@ export class DashboardService {
       }),
       this.prisma.employee.findMany({
         where: { deletedAt: null, user: { is: { role: 'EMPLOYEE', deletedAt: null } } },
-        include: { dependencyRef: true },
+        include: { dependencyRef: true, remoteDays: { where: { date: null }, select: { day: true } } },
         orderBy: { name: 'asc' },
       }),
+      this.prisma.licenseRequest.findMany({
+        where: { deletedAt: null, status: LicenseStatus.APPROVED, article: { not: 'Guardia en Feria' }, startDate: { lt: end }, endDate: { gte: start } },
+        select: { employeeId: true, startDate: true, endDate: true, article: true },
+      }),
+      this.prisma.strikeConfig.findUnique({ where: { id: 'default' }, select: { nextDate: true } }),
     ]);
     const attendanceByEmployeeDate = new Map(attendances.map((row) => [row.employeeId + ':' + formatDateOnlyArgentina(row.date), row]));
-    const employeesWithLogs = new Set(logs.map((row) => row.employeeId));
+    const logsByEmployeeDate = new Map(logs.map((row) => [row.employeeId + ':' + formatDateOnlyArgentina(row.date), row]));
+    const today = getArgentinaTodayDateOnly();
+    const daysInMonth = new Date(Date.UTC(year, month, 0, 12)).getUTCDate();
+    const calendarDays = Array.from({ length: daysInMonth }, (_, index) => `${year}-${String(month).padStart(2, '0')}-${String(index + 1).padStart(2, '0')}`);
+    const employeeDays = employees.flatMap((employee) => calendarDays.map((date) => {
+      const key = employee.id + ':' + date;
+      const log = logsByEmployeeDate.get(key);
+      const license = approvedLicenses.find((row) => row.employeeId === employee.id && formatDateOnlyArgentina(row.startDate) <= date && formatDateOnlyArgentina(row.endDate) >= date);
+      const strikeDay = strike?.nextDate && formatDateOnlyArgentina(strike.nextDate) === date;
+      const savedMode = log ? fromWorkLogMode(log.mode) : undefined;
+      const dayState = resolveEmployeeCalendarDay({ date, today, approvedLeave: Boolean(license), strike: Boolean(strikeDay), remoteDays: employee.remoteDays.map((row) => row.day), workLogLoaded: Boolean(log), workLogMode: savedMode });
+      return {
+        date, employeeId: employee.id, employeeName: employee.name,
+        dependency: employee.dependencyRef?.name || employee.dependency || '', status: dayState.status,
+        workLogLoaded: Boolean(log), workLogMode: savedMode || null,
+        collision: dayState.collision,
+        licenseArticle: license?.article || null,
+        workLogPending: dayState.workLogPending,
+      };
+    }));
     return {
       year,
       month,
@@ -225,11 +303,7 @@ export class DashboardService {
           attendance: attendance ? { entryTime: attendance.entryTime || '', exitTime: attendance.exitTime || '' } : null,
         };
       }),
-      employeesWithoutLogs: employees.filter((employee) => !employeesWithLogs.has(employee.id)).map((employee) => ({
-        employeeId: employee.id,
-        employeeName: employee.name,
-        dependency: employee.dependencyRef?.name || employee.dependency || '',
-      })),
+      employeeDays,
     };
   }
 
