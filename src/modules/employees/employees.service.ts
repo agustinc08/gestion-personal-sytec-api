@@ -10,6 +10,7 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { UpdateMyProfileDto } from './dto/update-my-profile.dto';
 import { AuditService } from '../audit/audit.service';
+import { getConfiguredPageSize, paginate, paginationRequested } from '../../shared/pagination';
 
 @Injectable()
 export class EmployeesService {
@@ -19,13 +20,15 @@ export class EmployeesService {
     return cuil.replace(/\D/g, '');
   }
 
-  async findAll() {
-    const rows = await this.prisma.employee.findMany({
-      where: { deletedAt: null },
-      include: { user: true, remoteDays: true, licenseRequests: true, dependencyRef: true },
-      orderBy: { name: 'asc' },
-    });
-    return rows.map(employeeToDto);
+  async findAll(query: Record<string, string> = {}) {
+    const where: any = { deletedAt: null };
+    if (query.q?.trim()) where.OR = ['name', 'email', 'cuil', 'dependency'].map((field) => ({ [field]: { contains: query.q.trim(), mode: 'insensitive' } }));
+    if (query.active === 'true') where.user = { is: { deletedAt: null } };
+    if (query.active === 'false') where.user = { is: { deletedAt: { not: null } } };
+    const include = { user: true, remoteDays: true, licenseRequests: true, dependencyRef: true };
+    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.employee.findMany({ where, include, orderBy: { name: 'asc' }, ...(options || {}) })).map(employeeToDto);
+    if (!paginationRequested(query)) return fetch();
+    return paginate(query, await getConfiguredPageSize(this.prisma), (options) => fetch(options), () => this.prisma.employee.count({ where }));
   }
 
   async findOne(id: string, user?: JwtUser) {

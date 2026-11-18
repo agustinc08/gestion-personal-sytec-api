@@ -9,6 +9,8 @@ import { CreateProjectUpdateDto } from './dto/create-project-update.dto';
 import { UpdateDeploymentDto } from './dto/update-deployment.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { AuditService } from '../audit/audit.service';
+import { getConfiguredPageSize, paginate, paginationRequested } from '../../shared/pagination';
+import { addDateOnlyDays, dateOnlyToArgentinaDayRange, getArgentinaTodayDateOnly } from '../../shared/date-utils';
 
 const projectInclude = {
   assignedEmployees: true,
@@ -66,13 +68,13 @@ export class ProjectsService {
     if (query.needsRework !== undefined) where.needsRework = query.needsRework === 'true';
     if (query.assignedEmployeeId) where.assignedEmployees = { some: { id: query.assignedEmployeeId } };
     if (query.q) where.name = { contains: String(query.q), mode: 'insensitive' };
-
-    const projects = await this.prisma.project.findMany({
-      where,
-      include: projectInclude,
-      orderBy: [{ year: 'desc' }, { updatedAt: 'desc' }],
-    });
-    return projects.map(projectToDto).sort((a: any, b: any) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
+    if (query.from || query.to) where.createdAt = { ...(query.from ? { gte: dateOnlyToArgentinaDayRange(query.from).start } : {}), ...(query.to ? { lt: dateOnlyToArgentinaDayRange(query.to).end } : {}) };
+    if (query.lifecycle === 'active') where.status = { in: ['ACTIVE', 'PENDING', 'IN_PROGRESS', 'PAUSED', 'IN_REVIEW', 'READY_FOR_GIT', 'IN_DEV_BRANCH', 'READY_FOR_DOCKER', 'DOCKERIZED', 'DEPLOYED', 'NEEDS_REWORK', 'NEEDS_REDESIGN'] };
+    if (query.lifecycle === 'completed') where.status = { in: ['COMPLETED', 'FINISHED'] };
+    if (query.lifecycle === 'archived') where.status = 'ARCHIVED';
+    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.project.findMany({ where, include: projectInclude, orderBy: [{ year: 'desc' }, { updatedAt: 'desc' }], ...(options || {}) })).map(projectToDto);
+    if (!paginationRequested(query)) return (await fetch()).sort((a: any, b: any) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
+    return paginate(query, await getConfiguredPageSize(this.prisma), fetch, () => this.prisma.project.count({ where }));
   }
 
   async findOne(id: string, user: JwtUser) {
@@ -267,17 +269,15 @@ export class ProjectsService {
   }
 
   async deadlines(user: JwtUser) {
-    const projects = await this.findAll(user);
-    const today = new Date();
-    const in7 = new Date(today.getTime() + 7 * 86400000);
-    const in15 = new Date(today.getTime() + 15 * 86400000);
+    const result = await this.findAll(user);
+    const projects = Array.isArray(result) ? result : result.items;
+    const today = getArgentinaTodayDateOnly();
+    const in7 = addDateOnlyDays(today, 7);
+    const in15 = addDateOnlyDays(today, 15);
 
     return projects.map((project: any) => {
-      const deadline = project.deadline ? new Date(`${project.deadline}T00:00:00`) : null;
-      return {
-        ...project,
-        deadlineStatus: !deadline ? 'sin_fecha' : deadline < today ? 'vencido' : deadline <= in7 ? 'esta_semana' : deadline <= in15 ? 'proximo' : 'en_termino',
-      };
+      const deadline = project.deadline ? String(project.deadline).slice(0, 10) : '';
+      return { ...project, deadlineStatus: !deadline ? 'sin_fecha' : deadline < today ? 'vencido' : deadline <= in7 ? 'esta_semana' : deadline <= in15 ? 'proximo' : 'en_termino' };
     });
   }
 

@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { ProjectStatus } from '@prisma/client';
-import { addDays, dateOnlyToArgentinaDate, dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina } from '../../shared/date-utils';
+import { LicenseStatus, ProjectStatus } from '@prisma/client';
+import { addDateOnlyDays, addDays, dateOnlyToArgentinaDate, dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina } from '../../shared/date-utils';
 import { fromWorkLogMode } from '../../shared/mappers';
 import { pendingWorkLogEmployeeIds, approvedLeaveEmployeeIdsForDate } from '../../shared/worklog-pending';
+import { resolveEmployeeCalendarDay } from '../../shared/calendar-day';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -184,20 +185,20 @@ export class DashboardService {
         orderBy: [{ deadline: 'asc' }, { updatedAt: 'desc' }],
       }),
     ]);
-    const today = new Date();
-    const in15 = new Date(today.getTime() + 15 * 86400000);
+    const today = getArgentinaTodayDateOnly();
+    const in15 = addDateOnlyDays(today, 15);
     return {
       licenses,
       workLogs,
       projects: projects.map((project) => ({
         ...project,
-        deadlineStatus: !project.deadline ? 'sin_fecha' : project.deadline < today ? 'vencido' : project.deadline <= in15 ? 'proximo' : 'en_termino',
+        deadlineStatus: !project.deadline ? 'sin_fecha' : formatDateOnlyArgentina(project.deadline) < today ? 'vencido' : formatDateOnlyArgentina(project.deadline) <= in15 ? 'proximo' : 'en_termino',
       })),
     };
   }
   async adminWorklogCalendar(query: Record<string, string>) {
     const { start, end, year, month } = monthRangeArgentina(query.year, query.month);
-    const [logs, attendances, employees] = await Promise.all([
+    const [logs, attendances, employees, approvedLicenses, strike] = await Promise.all([
       this.prisma.workLog.findMany({
         where: { deletedAt: null, date: { gte: start, lt: end } },
         include: { employee: { include: { dependencyRef: true } }, project: { select: { id: true, name: true } }, secondaryWorkItem: { select: { id: true, name: true } } },
@@ -210,12 +211,36 @@ export class DashboardService {
       }),
       this.prisma.employee.findMany({
         where: { deletedAt: null, user: { is: { role: 'EMPLOYEE', deletedAt: null } } },
-        include: { dependencyRef: true },
+        include: { dependencyRef: true, remoteDays: { where: { date: null }, select: { day: true } } },
         orderBy: { name: 'asc' },
       }),
+      this.prisma.licenseRequest.findMany({
+        where: { deletedAt: null, status: LicenseStatus.APPROVED, article: { not: 'Guardia en Feria' }, startDate: { lt: end }, endDate: { gte: start } },
+        select: { employeeId: true, startDate: true, endDate: true, article: true },
+      }),
+      this.prisma.strikeConfig.findUnique({ where: { id: 'default' }, select: { nextDate: true } }),
     ]);
     const attendanceByEmployeeDate = new Map(attendances.map((row) => [row.employeeId + ':' + formatDateOnlyArgentina(row.date), row]));
-    const employeesWithLogs = new Set(logs.map((row) => row.employeeId));
+    const logsByEmployeeDate = new Map(logs.map((row) => [row.employeeId + ':' + formatDateOnlyArgentina(row.date), row]));
+    const today = getArgentinaTodayDateOnly();
+    const daysInMonth = new Date(Date.UTC(year, month, 0, 12)).getUTCDate();
+    const calendarDays = Array.from({ length: daysInMonth }, (_, index) => `${year}-${String(month).padStart(2, '0')}-${String(index + 1).padStart(2, '0')}`);
+    const employeeDays = employees.flatMap((employee) => calendarDays.map((date) => {
+      const key = employee.id + ':' + date;
+      const log = logsByEmployeeDate.get(key);
+      const license = approvedLicenses.find((row) => row.employeeId === employee.id && formatDateOnlyArgentina(row.startDate) <= date && formatDateOnlyArgentina(row.endDate) >= date);
+      const strikeDay = strike?.nextDate && formatDateOnlyArgentina(strike.nextDate) === date;
+      const savedMode = log ? fromWorkLogMode(log.mode) : undefined;
+      const dayState = resolveEmployeeCalendarDay({ date, today, approvedLeave: Boolean(license), strike: Boolean(strikeDay), remoteDays: employee.remoteDays.map((row) => row.day), workLogLoaded: Boolean(log), workLogMode: savedMode });
+      return {
+        date, employeeId: employee.id, employeeName: employee.name,
+        dependency: employee.dependencyRef?.name || employee.dependency || '', status: dayState.status,
+        workLogLoaded: Boolean(log), workLogMode: savedMode || null,
+        collision: dayState.collision,
+        licenseArticle: license?.article || null,
+        workLogPending: dayState.workLogPending,
+      };
+    }));
     return {
       year,
       month,
@@ -241,11 +266,7 @@ export class DashboardService {
           attendance: attendance ? { entryTime: attendance.entryTime || '', exitTime: attendance.exitTime || '' } : null,
         };
       }),
-      employeesWithoutLogs: employees.filter((employee) => !employeesWithLogs.has(employee.id)).map((employee) => ({
-        employeeId: employee.id,
-        employeeName: employee.name,
-        dependency: employee.dependencyRef?.name || employee.dependency || '',
-      })),
+      employeeDays,
     };
   }
 
