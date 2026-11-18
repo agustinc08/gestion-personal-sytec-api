@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { toActivityType, toDate, toWorkLogMode, workLogToDto } from '../../shared/mappers';
 import { dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina } from '../../shared/date-utils';
@@ -14,6 +14,15 @@ import { getWorkdayStatus } from '../../shared/workday';
 @Injectable()
 export class WorkLogsService {
   constructor(private prisma: PrismaService, private audit: AuditService, private secondaryWorkItems: SecondaryWorkItemsService) {}
+
+  private async assertProjectAccess(projectId: string | null | undefined, user: JwtUser) {
+    if (!projectId || user.role === Role.ADMIN) return;
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null, assignedEmployees: { some: { id: user.employeeId || '' } } },
+      select: { id: true },
+    });
+    if (!project) throw new ForbiddenException('No estás asignado a este proyecto');
+  }
 
   private validateTimes(entryTime?: string, exitTime?: string) {
     if (entryTime && exitTime && exitTime < entryTime) {
@@ -53,6 +62,7 @@ export class WorkLogsService {
     const employeeId = user.role === Role.ADMIN && dto.employeeId ? dto.employeeId : user.employeeId;
     if (!employeeId) throw new ForbiddenException();
     const date = toDate(dto.date)!;
+    await this.assertProjectAccess(dto.projectId, user);
     this.validateTimes(dto.entryTime, dto.exitTime);
     let mode = toWorkLogMode(dto.mode);
     if (user.role !== Role.ADMIN && formatDateOnlyArgentina(date) >= getArgentinaTodayDateOnly()) {
@@ -89,11 +99,15 @@ export class WorkLogsService {
     const current = await this.prisma.workLog.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException();
     if (user.role !== Role.ADMIN && current.employeeId !== user.employeeId) throw new ForbiddenException();
+    if (user.role === Role.ADMIN && formatDateOnlyArgentina(current.date) < getArgentinaTodayDateOnly() && !dto.reason?.trim()) {
+      throw new BadRequestException('Indicá el motivo para modificar un parte histórico');
+    }
     const date = dto.date ? toDate(dto.date)! : current.date;
     const nextEntryTime = dto.entryTime === undefined ? current.entryTime || undefined : dto.entryTime || undefined;
     const nextExitTime = dto.exitTime === undefined ? current.exitTime || undefined : dto.exitTime || undefined;
     this.validateTimes(nextEntryTime, nextExitTime);
     const nextProjectId = dto.projectId === undefined ? current.projectId : dto.projectId || null;
+    await this.assertProjectAccess(nextProjectId, user);
     const secondaryWorkItem = nextProjectId ? null : await this.resolveSecondaryWorkItem({ ...dto, projectId: nextProjectId || undefined, title: dto.title || current.title }, current.employeeId);
     const nextSecondaryWorkItemId = nextProjectId ? null : (secondaryWorkItem?.id ?? (dto.secondaryWorkItemId === '' ? null : dto.secondaryWorkItemId ?? current.secondaryWorkItemId));
     const updated = await this.prisma.workLog.update({
@@ -113,7 +127,7 @@ export class WorkLogsService {
       include: { project: true, secondaryWorkItem: true },
     });
     if (updated.secondaryWorkItemId) await this.secondaryWorkItems.touch(updated.secondaryWorkItemId, updated.updatedAt || updated.date);
-    await this.audit.record(user, { action: 'UPDATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: updated.title, detail: 'Parte diario editado' });
+    await this.audit.record(user, { action: 'UPDATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: updated.title, detail: dto.reason?.trim() || 'Parte diario editado', metadata: { reason: dto.reason?.trim() || null, before: { employeeId: current.employeeId, date: formatDateOnlyArgentina(current.date), title: current.title, description: current.description, projectId: current.projectId, mode: current.mode, hours: current.hours }, after: { employeeId: updated.employeeId, date: formatDateOnlyArgentina(updated.date), title: updated.title, description: updated.description, projectId: updated.projectId, mode: updated.mode, hours: updated.hours } } });
     return workLogToDto(updated);
   }
   private attendanceToDto(row: any) {
@@ -155,11 +169,15 @@ export class WorkLogsService {
     await this.audit.record(user, { action: 'UPSERT_ATTENDANCE', module: 'WORK_LOGS', entityType: 'DailyAttendance', entityId: saved.id, title: 'Horario de jornada actualizado' });
     return this.attendanceToDto(saved);
   }
-  async remove(id: string, user: JwtUser) {
-    const current = await this.prisma.workLog.findUnique({ where: { id } });
+  async remove(id: string, user: JwtUser, reason?: string) {
+    const current = await this.prisma.workLog.findFirst({ where: { id, deletedAt: null } });
     if (!current) throw new NotFoundException();
     if (user.role !== Role.ADMIN && current.employeeId !== user.employeeId) throw new ForbiddenException();
+    if (user.role === Role.ADMIN && formatDateOnlyArgentina(current.date) < getArgentinaTodayDateOnly() && !reason?.trim()) {
+      throw new BadRequestException('Indicá el motivo para eliminar un parte histórico');
+    }
     await this.prisma.workLog.update({ where: { id }, data: { deletedAt: new Date() } });
+    await this.audit.record(user, { action: 'DELETE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: current.title, detail: reason?.trim() || 'Parte diario eliminado', metadata: { reason: reason?.trim() || null, before: { employeeId: current.employeeId, date: formatDateOnlyArgentina(current.date), title: current.title, description: current.description, projectId: current.projectId, mode: current.mode, hours: current.hours } } });
     return { status: 'success' };
   }
 }

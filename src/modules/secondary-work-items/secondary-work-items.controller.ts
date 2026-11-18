@@ -13,8 +13,8 @@ import { SecondaryWorkItemsService } from './secondary-work-items.service';
 export class SecondaryWorkItemsController {
   constructor(private readonly items: SecondaryWorkItemsService) {}
 
-  @Get() findAll() { return this.items.findAll(); }
+  @Get() findAll(@CurrentUser() user: JwtUser) { return this.items.findAll(user); }
   @Post() create(@Body() dto: CreateSecondaryWorkItemDto, @CurrentUser() user: JwtUser) { return this.items.create(dto, user); }
   @Patch(':id') @Roles(Role.ADMIN) update(@Param('id') id: string, @Body() dto: UpdateSecondaryWorkItemDto, @CurrentUser() user: JwtUser) { return this.items.update(id, dto, user); }
-  @Get(':id/work-logs') workLogs(@Param('id') id: string) { return this.items.workLogs(id); }
+  @Get(':id/work-logs') workLogs(@Param('id') id: string, @CurrentUser() user: JwtUser) { return this.items.workLogs(id, user); }
 }

@@ -11,6 +11,7 @@ describe('workday status', () => {
     assert.equal(getWorkdayStatus({ date: '2026-11-21' }), 'WEEKEND');
     assert.equal(getWorkdayStatus({ date: '2026-11-22' }), 'WEEKEND');
     assert.equal(getWorkdayStatus({ date: '2026-11-20', strikeDate: '2026-11-20' }), 'STRIKE');
+    assert.equal(getWorkdayStatus({ date: '2026-11-21', strikeDate: '2026-11-21' }), 'STRIKE');
   });
   it('requires work logs only on working days', () => {
     assert.equal(requiresWorkLog('WEEKEND'), false);

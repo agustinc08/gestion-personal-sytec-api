@@ -5,6 +5,8 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
+import { LoginRateLimitService } from '../../shared/env-validation';
+import { LoginRateLimitGuard } from './guards/login-rate-limit.guard';
 
 @Module({
   imports: [
@@ -13,13 +15,13 @@ import { JwtStrategy } from './jwt.strategy';
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get('JWT_SECRET') || 'change_me',
+        secret: config.getOrThrow('JWT_SECRET'),
         signOptions: { expiresIn: config.get('JWT_EXPIRES_IN') || '7d' },
       }),
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, LoginRateLimitService, LoginRateLimitGuard],
   exports: [AuthService],
 })
 export class AuthModule {}
