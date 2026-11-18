@@ -6,6 +6,7 @@ export type JwtUser = {
   email?: string | null;
   role: 'ADMIN' | 'EMPLOYEE';
   employeeId?: string | null;
+  mustChangePassword?: boolean;
 };
 
 export const CurrentUser = createParamDecorator((_: unknown, ctx: ExecutionContext): JwtUser => {
