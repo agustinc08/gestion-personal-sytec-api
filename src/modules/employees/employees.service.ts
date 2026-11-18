@@ -23,6 +23,7 @@ export class EmployeesService {
   async findAll(query: Record<string, string> = {}) {
     const where: any = { deletedAt: null };
     if (query.q?.trim()) where.OR = ['name', 'email', 'cuil', 'dependency'].map((field) => ({ [field]: { contains: query.q.trim(), mode: 'insensitive' } }));
+    if (query.dependencyId) where.dependencyId = query.dependencyId;
     if (query.active === 'true') where.user = { is: { deletedAt: null } };
     if (query.active === 'false') where.user = { is: { deletedAt: { not: null } } };
     const include = { user: true, remoteDays: true, licenseRequests: true, dependencyRef: true };

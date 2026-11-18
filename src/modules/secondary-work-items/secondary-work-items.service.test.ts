@@ -38,4 +38,20 @@ describe('secondary work item authorization', () => {
     await service.workLogs('item-b', { id: 'admin', cuil: '', role: Role.ADMIN });
     assert.equal(query.where.employeeId, undefined);
   });
+
+  it('keeps employee authorization scope when listing a server page', async () => {
+    let query: any;
+    const prisma = {
+      secondaryWorkItem: {
+        findMany: async (args: any) => { query = args; return []; },
+        count: async (args: any) => { assert.deepEqual(args.where, query.where); return 3; },
+      },
+    };
+    const service = new SecondaryWorkItemsService(prisma as any);
+    const result = await service.findAll({ id: 'u-a', cuil: '', role: Role.EMPLOYEE, employeeId: 'emp-a' }, { page: '2', pageSize: '1' });
+    assert.deepEqual(query.where, { workLogs: { some: { employeeId: 'emp-a', deletedAt: null } } });
+    assert.equal(query.skip, 1);
+    assert.equal(query.take, 1);
+    assert.deepEqual(result, { items: [], page: 2, pageSize: 1, total: 3, totalPages: 3 });
+  });
 });

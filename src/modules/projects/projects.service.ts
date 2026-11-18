@@ -63,15 +63,37 @@ export class ProjectsService {
     if (query.year) where.year = Number(query.year);
     if (query.status) where.status = toProjectStatus(query.status);
     if (query.difficulty) where.difficulty = toProjectDifficulty(query.difficulty);
-    if (query.ownerId) where.ownerId = query.ownerId;
-    if (query.needsRedesign !== undefined) where.needsRedesign = query.needsRedesign === 'true';
-    if (query.needsRework !== undefined) where.needsRework = query.needsRework === 'true';
+    if (query.ownerId === 'none') where.ownerId = null;
+    else if (query.ownerId) where.ownerId = query.ownerId;
+    const addAnd = (condition: any) => { where.AND = [...(where.AND || []), condition]; };
+    if (query.needsRedesign === 'true') addAnd({ OR: [{ needsRedesign: true }, { status: toProjectStatus('necesita_rediseno') }] });
+    if (query.needsRedesign === 'false') addAnd({ needsRedesign: false, status: { not: toProjectStatus('necesita_rediseno') } });
+    if (query.needsRework === 'true') addAnd({ OR: [{ needsRework: true }, { status: toProjectStatus('necesita_rehacer') }] });
+    if (query.needsRework === 'false') addAnd({ needsRework: false, status: { not: toProjectStatus('necesita_rehacer') } });
     if (query.assignedEmployeeId) where.assignedEmployees = { some: { id: query.assignedEmployeeId } };
     if (query.q) where.name = { contains: String(query.q), mode: 'insensitive' };
     if (query.from || query.to) where.createdAt = { ...(query.from ? { gte: dateOnlyToArgentinaDayRange(query.from).start } : {}), ...(query.to ? { lt: dateOnlyToArgentinaDayRange(query.to).end } : {}) };
-    if (query.lifecycle === 'active') where.status = { in: ['ACTIVE', 'PENDING', 'IN_PROGRESS', 'PAUSED', 'IN_REVIEW', 'READY_FOR_GIT', 'IN_DEV_BRANCH', 'READY_FOR_DOCKER', 'DOCKERIZED', 'DEPLOYED', 'NEEDS_REWORK', 'NEEDS_REDESIGN'] };
-    if (query.lifecycle === 'completed') where.status = { in: ['COMPLETED', 'FINISHED'] };
-    if (query.lifecycle === 'archived') where.status = 'ARCHIVED';
+    const lifecycleStatus = query.lifecycle === 'active'
+      ? { in: ['ACTIVE', 'PENDING', 'IN_PROGRESS', 'PAUSED', 'IN_REVIEW', 'READY_FOR_GIT', 'IN_DEV_BRANCH', 'READY_FOR_DOCKER', 'DOCKERIZED', 'DEPLOYED', 'NEEDS_REWORK', 'NEEDS_REDESIGN'] }
+      : query.lifecycle === 'completed' ? { in: ['COMPLETED', 'FINISHED'] }
+        : query.lifecycle === 'archived' ? 'ARCHIVED' : undefined;
+    if (lifecycleStatus !== undefined) {
+      if (query.status) addAnd({ status: lifecycleStatus });
+      else where.status = lifecycleStatus;
+    }
+    if (query.deadlineStatus) {
+      const today = getArgentinaTodayDateOnly();
+      const todayRange = dateOnlyToArgentinaDayRange(today);
+      const weekEnd = addDateOnlyDays(today, 7);
+      const twoWeekEnd = addDateOnlyDays(today, 15);
+      const weekEndRange = dateOnlyToArgentinaDayRange(weekEnd);
+      const twoWeekEndRange = dateOnlyToArgentinaDayRange(twoWeekEnd);
+      if (query.deadlineStatus === 'sin_fecha') where.deadline = null;
+      if (query.deadlineStatus === 'vencido') where.deadline = { lt: todayRange.start };
+      if (query.deadlineStatus === 'vence_hoy') where.deadline = { gte: todayRange.start, lt: todayRange.end };
+      if (query.deadlineStatus === 'esta_semana') where.deadline = { gte: todayRange.end, lt: weekEndRange.end };
+      if (query.deadlineStatus === 'proximo') where.deadline = { gte: weekEndRange.end, lt: twoWeekEndRange.end };
+    }
     const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.project.findMany({ where, include: projectInclude, orderBy: [{ year: 'desc' }, { updatedAt: 'desc' }], ...(options || {}) })).map(projectToDto);
     if (!paginationRequested(query)) return (await fetch()).sort((a: any, b: any) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
     return paginate(query, await getConfiguredPageSize(this.prisma), fetch, () => this.prisma.project.count({ where }));

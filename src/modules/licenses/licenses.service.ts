@@ -41,7 +41,15 @@ export class LicensesService {
     const where: any = { deletedAt: null };
     if (query.employeeId) where.employeeId = query.employeeId;
     if (query.status) where.status = toLicenseStatus(query.status);
-    if (query.q?.trim()) where.OR = ['article', 'reason'].map((field) => ({ [field]: { contains: query.q.trim(), mode: 'insensitive' } }));
+    if (query.q?.trim()) {
+      const contains = { contains: query.q.trim(), mode: 'insensitive' };
+      where.OR = [
+        { article: contains },
+        { reason: contains },
+        { employee: { is: { name: contains } } },
+        { employee: { is: { dependency: contains } } },
+      ];
+    }
     if (query.from || query.to) where.startDate = { ...(query.from ? { gte: dateOnlyToArgentinaDayRange(query.from).start } : {}), ...(query.to ? { lt: dateOnlyToArgentinaDayRange(query.to).end } : {}) };
     return where;
   }
