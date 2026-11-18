@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DeployEnvironment, DeployStatus, Role } from '@prisma/client';
-import { deploymentToDto, projectToDto, toDate, toProjectDifficulty, toProjectStatus } from '../../shared/mappers';
+import { deploymentToDto, fromProjectStatus, projectToDto, toDate, toProjectDifficulty, toProjectStatus } from '../../shared/mappers';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDeploymentDto } from './dto/create-deployment.dto';
@@ -97,6 +97,32 @@ export class ProjectsService {
     const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.project.findMany({ where, include: projectInclude, orderBy: [{ year: 'desc' }, { updatedAt: 'desc' }], ...(options || {}) })).map(projectToDto);
     if (!paginationRequested(query)) return (await fetch()).sort((a: any, b: any) => String(b.lastActivityAt || b.updatedAt || '').localeCompare(String(a.lastActivityAt || a.updatedAt || '')));
     return paginate(query, await getConfiguredPageSize(this.prisma), fetch, () => this.prisma.project.count({ where }));
+  }
+
+  async findOptions(user: JwtUser) {
+    const rows = await this.prisma.project.findMany({
+      where: { deletedAt: null, ...this.accessWhere(user) },
+      select: {
+        id: true, name: true, status: true, year: true, deadline: true, ownerId: true,
+        assignedEmployees: { select: { id: true } },
+        _count: { select: { workLogs: { where: { deletedAt: null } } } },
+      },
+      orderBy: [{ year: 'desc' }, { name: 'asc' }],
+    });
+    return rows.map((project) => ({
+      id: project.id,
+      name: project.name,
+      description: '',
+      requesterDependency: '',
+      assignedEmployeeIds: project.assignedEmployees.map((employee) => employee.id),
+      status: fromProjectStatus(project.status),
+      ownerId: project.ownerId || '',
+      year: project.year,
+      deadline: project.deadline,
+      workLogsCount: project._count.workLogs,
+      updates: [],
+      deployments: [],
+    }));
   }
 
   async findOne(id: string, user: JwtUser) {

@@ -69,6 +69,17 @@ export class SecondaryWorkItemsService {
     return paginate(query, await getConfiguredPageSize(this.prisma), fetch, () => this.prisma.secondaryWorkItem.count({ where }));
   }
 
+  async findOptions(user: JwtUser) {
+    const employeeId = user.role === Role.EMPLOYEE ? user.employeeId || '' : undefined;
+    const where = employeeId ? { workLogs: { some: { employeeId, deletedAt: null } } } : {};
+    const rows = await this.prisma.secondaryWorkItem.findMany({
+      where,
+      select: { id: true, name: true, status: true },
+      orderBy: { name: 'asc' },
+    });
+    return rows.map((row) => ({ id: row.id, name: row.name, status: row.status }));
+  }
+
   async findOrCreateByName(name: string, employeeId?: string | null) {
     const trimmed = (name || '').trim().replace(/\s+/g, ' ');
     const normalizedName = normalizeSecondaryWorkItemName(trimmed);

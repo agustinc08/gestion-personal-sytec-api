@@ -22,6 +22,8 @@ export class ProjectsController {
     return this.projects.findAll(user, query);
   }
 
+  @Get('options') options(@CurrentUser() user: JwtUser) { return this.projects.findOptions(user); }
+
   @Get('deadlines')
   deadlines(@CurrentUser() user: JwtUser) {
     return this.projects.deadlines(user);

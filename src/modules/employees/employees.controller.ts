@@ -17,6 +17,7 @@ export class EmployeesController {
   constructor(private employees: EmployeesService) {}
 
   @Get() @Roles(Role.ADMIN) findAll(@Query() query: Record<string, string>) { return this.employees.findAll(query); }
+  @Get('options') @Roles(Role.ADMIN) options() { return this.employees.findOptions(); }
   @Get('me') me(@CurrentUser() user: JwtUser) { return this.employees.findMe(user); }
   @Patch('me') updateMe(@CurrentUser() user: JwtUser, @Body() dto: UpdateMyProfileDto) { return this.employees.updateMe(user, dto); }
   @Post('me/avatar') @UseInterceptors(FileInterceptor('avatar', { limits: { fileSize: 5 * 1024 * 1024 } }))
