@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { mkdir, writeFile } from 'fs/promises';
 import { extname, join } from 'path';
@@ -20,26 +20,66 @@ export class EmployeesService {
     return cuil.replace(/\D/g, '');
   }
 
+  private async toDtos(rows: any[]) {
+    if (rows.length === 0) return [];
+    const licenseDays = await this.prisma.$queryRaw<Array<{ employeeId: string; daysTaken: number }>>(Prisma.sql`
+      SELECT "employeeId", COALESCE(SUM(GREATEST(1, ("endDate"::date - "startDate"::date) + 1)), 0)::int AS "daysTaken"
+      FROM "LicenseRequest"
+      WHERE "deletedAt" IS NULL AND status = 'APPROVED' AND article = 'Art. 14'
+        AND "employeeId" IN (${Prisma.join(rows.map((row) => row.id))})
+      GROUP BY "employeeId"
+    `);
+    const daysByEmployee = new Map(licenseDays.map((row) => [row.employeeId, Number(row.daysTaken)]));
+    return rows.map((row) => ({ ...employeeToDto(row), licenseDaysTaken: daysByEmployee.get(row.id) || 0 }));
+  }
+
   async findAll(query: Record<string, string> = {}) {
     const where: any = { deletedAt: null };
     if (query.q?.trim()) where.OR = ['name', 'email', 'cuil', 'dependency'].map((field) => ({ [field]: { contains: query.q.trim(), mode: 'insensitive' } }));
     if (query.dependencyId) where.dependencyId = query.dependencyId;
     if (query.active === 'true') where.user = { is: { deletedAt: null } };
     if (query.active === 'false') where.user = { is: { deletedAt: { not: null } } };
-    const include = { user: true, remoteDays: true, licenseRequests: true, dependencyRef: true };
-    const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.employee.findMany({ where, include, orderBy: { name: 'asc' }, ...(options || {}) })).map(employeeToDto);
+    const select = {
+      id: true, name: true, email: true, avatar: true, dependency: true, dependencyId: true,
+      position: true, compensatoryDays: true, totalLicenseDays: true, strikeDutyOrder: true, cuil: true,
+      user: { select: { role: true, mustChangePassword: true } },
+      remoteDays: { where: { date: null }, select: { day: true } },
+      dependencyRef: { select: { name: true } },
+    };
+    const fetch = async (options?: { skip: number; take: number }) => this.toDtos(await this.prisma.employee.findMany({ where, select, orderBy: { name: 'asc' }, ...(options || {}) }));
     if (!paginationRequested(query)) return fetch();
     return paginate(query, await getConfiguredPageSize(this.prisma), (options) => fetch(options), () => this.prisma.employee.count({ where }));
+  }
+
+  async findOptions() {
+    const rows = await this.prisma.employee.findMany({
+      where: { deletedAt: null },
+      select: {
+        id: true, name: true, email: true, avatar: true, dependency: true, dependencyId: true,
+        position: true, compensatoryDays: true, totalLicenseDays: true, strikeDutyOrder: true, cuil: true,
+        user: { select: { role: true } },
+        remoteDays: { where: { date: null }, select: { day: true } },
+        dependencyRef: { select: { name: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+    return this.toDtos(rows);
   }
 
   async findOne(id: string, user?: JwtUser) {
     if (user?.role !== Role.ADMIN && user?.employeeId !== id) throw new ForbiddenException();
     const row = await this.prisma.employee.findFirst({
       where: { id, deletedAt: null },
-      include: { user: true, remoteDays: true, licenseRequests: true, dependencyRef: true },
+      select: {
+        id: true, name: true, email: true, avatar: true, dependency: true, dependencyId: true, position: true,
+        compensatoryDays: true, totalLicenseDays: true, strikeDutyOrder: true, cuil: true,
+        user: { select: { role: true, mustChangePassword: true } },
+        remoteDays: { where: { date: null }, select: { day: true } },
+        dependencyRef: { select: { name: true } },
+      },
     });
     if (!row) throw new NotFoundException('Empleado no encontrado');
-    return employeeToDto(row);
+    return (await this.toDtos([row]))[0];
   }
 
   async findMe(user: JwtUser) {

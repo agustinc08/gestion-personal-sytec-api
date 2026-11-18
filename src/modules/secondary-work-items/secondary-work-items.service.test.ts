@@ -54,4 +54,14 @@ describe('secondary work item authorization', () => {
     assert.equal(query.take, 1);
     assert.deepEqual(result, { items: [], page: 2, pageSize: 1, total: 3, totalPages: 3 });
   });
+
+  it('returns only lightweight secondary options scoped to the employee', async () => {
+    let query: any;
+    const prisma = { secondaryWorkItem: { findMany: async (args: any) => { query = args; return [{ id: 'item-1', name: 'Soporte', status: 'ACTIVE' }]; } } };
+    const service = new SecondaryWorkItemsService(prisma as any);
+    const options = await service.findOptions({ id: 'u-a', cuil: '', role: Role.EMPLOYEE, employeeId: 'emp-a' });
+    assert.deepEqual(query.where, { workLogs: { some: { employeeId: 'emp-a', deletedAt: null } } });
+    assert.deepEqual(query.select, { id: true, name: true, status: true });
+    assert.deepEqual(options, [{ id: 'item-1', name: 'Soporte', status: 'ACTIVE' }]);
+  });
 });
