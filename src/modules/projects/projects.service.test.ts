@@ -4,6 +4,23 @@ import { ProjectStatus, Role } from '@prisma/client';
 import { ProjectsService } from './projects.service';
 
 describe('project server pagination filters', () => {
+  it('accepts HTTP string pagination params and sends numeric values to Prisma for /my', async () => {
+    let args: any;
+    const prisma = {
+      project: {
+        findMany: async (value: any) => { args = value; return []; },
+        count: async () => 0,
+      },
+    };
+    const service = new ProjectsService(prisma as any, {} as any);
+    const result = await service.findAll({ id: 'employee-user', role: Role.EMPLOYEE, employeeId: 'employee-auth' } as any, { page: '1', pageSize: '25' });
+    assert.equal(args.skip, 0);
+    assert.equal(args.take, 25);
+    assert.deepEqual(args.where.assignedEmployees, { some: { id: 'employee-auth' } });
+    assert.equal(Array.isArray(result), false);
+    assert.equal((result as any).pageSize, 25);
+  });
+
   it('keeps lifecycle and exact status filters, owner, deadline, and q server-side', async () => {
     let query: any;
     const prisma = {
