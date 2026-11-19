@@ -235,15 +235,17 @@ export function licenseToDto(req: any) {
 }
 
 export function workLogToDto(log: any) {
+  const unavailableProjectName = log.projectId ? 'Proyecto no disponible' : '';
+  const projectName = log.project?.name || unavailableProjectName;
   return {
     id: log.id,
     employeeId: log.employeeId,
     projectId: log.projectId || '',
-    projectName: log.project?.name || '',
+    projectName,
     secondaryWorkItemId: log.secondaryWorkItemId || '',
     secondaryWorkItemName: log.secondaryWorkItem?.name || '',
     workItemType: log.projectId ? 'PROJECT' : (log.secondaryWorkItemId ? 'SECONDARY' : 'FREE_TEXT'),
-    displayTitle: log.project?.name || log.secondaryWorkItem?.name || log.title,
+    displayTitle: log.project?.name || log.secondaryWorkItem?.name || log.title || unavailableProjectName,
     title: log.title,
     description: log.description,
     date: dateOnly(log.date),

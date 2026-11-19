@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { Role } from '@prisma/client';
+import { ProjectStatus, Role } from '@prisma/client';
 import { ProjectsService } from './projects.service';
 
 describe('project server pagination filters', () => {
@@ -32,9 +32,17 @@ describe('project server pagination filters', () => {
     const prisma = { project: { findMany: async (args: any) => { query = args; return [{ id: 'project-1', name: 'Portal', status: 'ACTIVE', year: 2026, deadline: null, ownerId: null, assignedEmployees: [{ id: 'emp-1' }], _count: { workLogs: 3 } }]; } } };
     const service = new ProjectsService(prisma as any, {} as any);
     const options = await service.findOptions({ id: 'user-1', cuil: '', role: Role.EMPLOYEE, employeeId: 'emp-1' });
-    assert.deepEqual(query.where, { deletedAt: null, assignedEmployees: { some: { id: 'emp-1' } } });
+    assert.deepEqual(query.where, { deletedAt: null, status: { not: ProjectStatus.ARCHIVED }, assignedEmployees: { some: { id: 'emp-1' } } });
     assert.equal(query.select.updates, undefined);
     assert.equal(query.select.deployments, undefined);
     assert.equal(options[0].workLogsCount, 3);
+  });
+
+  it('does not offer archived projects for new selections', async () => {
+    let query: any;
+    const prisma = { project: { findMany: async (args: any) => { query = args; return []; } } };
+    const service = new ProjectsService(prisma as any, {} as any);
+    assert.deepEqual(await service.findOptions({ id: 'user-1', cuil: '', role: Role.ADMIN }), []);
+    assert.deepEqual(query.where, { deletedAt: null, status: { not: ProjectStatus.ARCHIVED } });
   });
 });
