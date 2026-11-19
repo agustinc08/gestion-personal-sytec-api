@@ -40,7 +40,13 @@ export class LicensesService {
   private listWhere(query: Record<string, string>) {
     const where: any = { deletedAt: null };
     if (query.employeeId) where.employeeId = query.employeeId;
-    if (query.status) where.status = toLicenseStatus(query.status);
+    if (query.status) {
+      const status = query.status.trim().toLowerCase();
+      if (!['pendiente', 'aprobado', 'rechazado', 'cancelado'].includes(status)) {
+        throw new BadRequestException('Estado de licencia inválido');
+      }
+      where.status = toLicenseStatus(status);
+    }
     if (query.q?.trim()) {
       const contains = { contains: query.q.trim(), mode: 'insensitive' };
       where.OR = [

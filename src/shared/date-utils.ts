@@ -1,3 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
+
 export const ARGENTINA_TIME_ZONE = process.env.APP_TIMEZONE || 'America/Argentina/Buenos_Aires';
 
 const ARGENTINA_UTC_OFFSET_HOURS = 3;
@@ -35,7 +37,10 @@ export function dateOnlyToArgentinaDate(value?: string | Date | null): Date | un
 }
 
 export function argentinaDayRange(value?: string | Date | null): { start: Date; end: Date } {
-  const dateOnly = value instanceof Date ? formatDateOnlyArgentina(value) : parseArgentinaDateOnly(value || getArgentinaTodayDateOnly());
+  const dateOnly = value instanceof Date
+    ? formatDateOnlyArgentina(value)
+    : parseArgentinaDateOnly(value || getArgentinaTodayDateOnly());
+  if (!dateOnly) throw new BadRequestException('La fecha debe ser válida y usar el formato AAAA-MM-DD');
   const [year, month, day] = dateOnly.split('-').map(Number);
   const start = new Date(Date.UTC(year, month - 1, day, ARGENTINA_UTC_OFFSET_HOURS, 0, 0, 0));
   const end = new Date(Date.UTC(year, month - 1, day + 1, ARGENTINA_UTC_OFFSET_HOURS, 0, 0, 0));

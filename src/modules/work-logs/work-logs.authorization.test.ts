@@ -118,3 +118,33 @@ describe('employee work log editing', () => {
     assert.equal(ctx.auditCalls.length, 0);
   });
 });
+
+describe('employee work log pagination scope', () => {
+  it('accepts HTTP string pagination params and ignores a different employeeId query value', async () => {
+    let args: any;
+    const prisma = {
+      workLog: {
+        findMany: async (value: any) => { args = value; return []; },
+        count: async () => 0,
+      },
+    };
+    const service = new WorkLogsService(prisma as any, {} as any, {} as any);
+    const result = await service.findMine(
+      { id: 'employee-user', role: Role.EMPLOYEE, employeeId: 'employee-auth' } as any,
+      { year: '2026', month: '11', employeeId: 'employee-other', page: '1', pageSize: '100' },
+    );
+    assert.equal(args.skip, 0);
+    assert.equal(args.take, 100);
+    assert.equal(args.where.employeeId, 'employee-auth');
+    assert.equal(Array.isArray(result), false);
+    assert.equal((result as any).pageSize, 100);
+  });
+
+  it('does not accept a query employeeId when the authenticated user has no employee relation', async () => {
+    let args: any;
+    const prisma = { workLog: { findMany: async (value: any) => { args = value; return []; }, count: async () => 0 } };
+    const service = new WorkLogsService(prisma as any, {} as any, {} as any);
+    await service.findMine({ role: Role.EMPLOYEE, employeeId: null } as any, { employeeId: 'employee-other', page: '1', pageSize: '25' });
+    assert.equal(args.where.employeeId, '');
+  });
+});

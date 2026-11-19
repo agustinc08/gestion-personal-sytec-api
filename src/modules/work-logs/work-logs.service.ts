@@ -36,9 +36,10 @@ export class WorkLogsService {
     }
   }
 
-  private where(query: Record<string, string> = {}, employeeId?: string) {
+  private where(query: Record<string, string> = {}, employeeIdOverride?: string | null) {
     const where: any = { deletedAt: null };
-    if (employeeId || query.employeeId) where.employeeId = employeeId || query.employeeId;
+    if (employeeIdOverride !== undefined) where.employeeId = employeeIdOverride || '';
+    else if (query.employeeId) where.employeeId = query.employeeId;
     if (query.projectId) where.projectId = query.projectId;
     if (query.secondaryWorkItemId) where.secondaryWorkItemId = query.secondaryWorkItemId;
     if (query.activityType) where.activityType = toActivityType(query.activityType);
@@ -56,7 +57,7 @@ export class WorkLogsService {
     return this.findWorkLogs(this.where(query), query);
   }
   async findMine(user: JwtUser, query: Record<string, string> = {}) {
-    return this.findWorkLogs(this.where(query, user.employeeId || ''), query);
+    return this.findWorkLogs(this.where(query, user.employeeId), query);
   }
   private async findWorkLogs(where: any, query: Record<string, string>) {
     const fetch = async (options?: { skip: number; take: number }) => (await this.prisma.workLog.findMany({ where, include: { project: true, secondaryWorkItem: true }, orderBy: { date: 'desc' }, ...(options || {}) })).map(workLogToDto);
