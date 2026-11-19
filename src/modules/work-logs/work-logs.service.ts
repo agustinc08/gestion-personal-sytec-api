@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { toActivityType, toDate, toWorkLogMode, workLogToDto } from '../../shared/mappers';
-import { dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina } from '../../shared/date-utils';
+import { addDateOnlyDays, dateOnlyToArgentinaDayRange, formatDateOnlyArgentina, getArgentinaTodayDateOnly, monthRangeArgentina, parseArgentinaDateOnly } from '../../shared/date-utils';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkLogDto } from './dto/create-work-log.dto';
@@ -11,6 +11,11 @@ import { AuditService } from '../audit/audit.service';
 import { SecondaryWorkItemsService } from '../secondary-work-items/secondary-work-items.service';
 import { getWorkdayStatus } from '../../shared/workday';
 import { getConfiguredPageSize, paginate, paginationRequested } from '../../shared/pagination';
+
+export function isEmployeeWorkLogDateEditable(value: Date | string, today = getArgentinaTodayDateOnly()): boolean {
+  const date = value instanceof Date ? formatDateOnlyArgentina(value) : parseArgentinaDateOnly(value);
+  return !!date && date >= addDateOnlyDays(today, -6) && date <= today;
+}
 
 @Injectable()
 export class WorkLogsService {
@@ -104,38 +109,74 @@ export class WorkLogsService {
     return workLogToDto(created);
   }
   async update(id: string, dto: UpdateWorkLogDto, user: JwtUser) {
-    const current = await this.prisma.workLog.findFirst({ where: { id, deletedAt: null } });
+    const current = await this.prisma.workLog.findFirst({ where: { id, deletedAt: null }, include: { project: true, secondaryWorkItem: true } });
     if (!current) throw new NotFoundException();
     if (user.role !== Role.ADMIN && current.employeeId !== user.employeeId) throw new ForbiddenException();
+    if (user.role !== Role.ADMIN && !isEmployeeWorkLogDateEditable(current.date)) {
+      throw new BadRequestException('Solo podés corregir partes de los últimos 7 días.');
+    }
     if (user.role === Role.ADMIN && formatDateOnlyArgentina(current.date) < getArgentinaTodayDateOnly() && !dto.reason?.trim()) {
       throw new BadRequestException('Indicá el motivo para modificar un parte histórico');
     }
-    const date = dto.date ? toDate(dto.date)! : current.date;
+    const normalizedTargetDate = dto.date === undefined ? formatDateOnlyArgentina(current.date) : parseArgentinaDateOnly(dto.date);
+    if (!normalizedTargetDate) throw new BadRequestException('La fecha del parte no es válida');
+    if (user.role !== Role.ADMIN && !isEmployeeWorkLogDateEditable(normalizedTargetDate)) {
+      throw new BadRequestException('Solo podés corregir partes de los últimos 7 días.');
+    }
+    const date = dto.date === undefined ? current.date : toDate(normalizedTargetDate);
+    if (!date) throw new BadRequestException('La fecha del parte no es válida');
     const nextEntryTime = dto.entryTime === undefined ? current.entryTime || undefined : dto.entryTime || undefined;
     const nextExitTime = dto.exitTime === undefined ? current.exitTime || undefined : dto.exitTime || undefined;
     this.validateTimes(nextEntryTime, nextExitTime);
     const nextProjectId = dto.projectId === undefined ? current.projectId : dto.projectId || null;
     await this.assertProjectAccess(nextProjectId, user);
-    const secondaryWorkItem = nextProjectId ? null : await this.resolveSecondaryWorkItem({ ...dto, projectId: nextProjectId || undefined, title: dto.title || current.title }, current.employeeId);
-    const nextSecondaryWorkItemId = nextProjectId ? null : (secondaryWorkItem?.id ?? (dto.secondaryWorkItemId === '' ? null : dto.secondaryWorkItemId ?? current.secondaryWorkItemId));
+    let nextSecondaryWorkItemId = current.secondaryWorkItemId;
+    if (nextProjectId) nextSecondaryWorkItemId = null;
+    else if (dto.secondaryWorkItemId !== undefined || dto.secondaryWorkItemName !== undefined) {
+      const secondaryWorkItem = await this.resolveSecondaryWorkItem(dto, current.employeeId);
+      nextSecondaryWorkItemId = secondaryWorkItem?.id ?? null;
+    } else if (user.role === Role.ADMIN) {
+      const secondaryWorkItem = await this.resolveSecondaryWorkItem({ ...dto, title: dto.title || current.title }, current.employeeId);
+      nextSecondaryWorkItemId = secondaryWorkItem?.id ?? current.secondaryWorkItemId;
+    }
+    const nextTitle = dto.title ?? current.title;
+    const nextDescription = dto.description ?? current.description;
+    const nextMode = dto.mode ? toWorkLogMode(dto.mode) : current.mode;
+    const nextActivityType = dto.activityType ? toActivityType(dto.activityType) : current.activityType;
+    const nextHours = dto.hours === undefined ? current.hours : dto.hours;
+    const nextEntryTimeValue = dto.entryTime === undefined ? current.entryTime : dto.entryTime || null;
+    const nextExitTimeValue = dto.exitTime === undefined ? current.exitTime : dto.exitTime || null;
+    const unchanged = formatDateOnlyArgentina(date) === formatDateOnlyArgentina(current.date)
+      && nextProjectId === current.projectId
+      && nextSecondaryWorkItemId === current.secondaryWorkItemId
+      && nextTitle === current.title
+      && nextDescription === current.description
+      && nextMode === current.mode
+      && nextActivityType === current.activityType
+      && nextHours === current.hours
+      && nextEntryTimeValue === current.entryTime
+      && nextExitTimeValue === current.exitTime;
+    if (unchanged) return workLogToDto(current);
     const updated = await this.prisma.workLog.update({
       where: { id },
       data: {
         projectId: nextProjectId,
         secondaryWorkItemId: nextSecondaryWorkItemId,
-        title: dto.title,
-        description: dto.description,
+        title: nextTitle,
+        description: nextDescription,
         date,
-        mode: dto.mode ? toWorkLogMode(dto.mode) : undefined,
-        activityType: dto.activityType ? toActivityType(dto.activityType) : undefined,
-        hours: dto.hours,
-        entryTime: dto.entryTime === undefined ? undefined : dto.entryTime || null,
-        exitTime: dto.exitTime === undefined ? undefined : dto.exitTime || null,
+        mode: nextMode,
+        activityType: nextActivityType,
+        hours: nextHours,
+        entryTime: nextEntryTimeValue,
+        exitTime: nextExitTimeValue,
       },
       include: { project: true, secondaryWorkItem: true },
     });
     if (updated.secondaryWorkItemId) await this.secondaryWorkItems.touch(updated.secondaryWorkItemId, updated.updatedAt || updated.date);
-    await this.audit.record(user, { action: 'UPDATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: updated.title, detail: dto.reason?.trim() || 'Parte diario editado', metadata: { reason: dto.reason?.trim() || null, before: { employeeId: current.employeeId, date: formatDateOnlyArgentina(current.date), title: current.title, description: current.description, projectId: current.projectId, mode: current.mode, hours: current.hours }, after: { employeeId: updated.employeeId, date: formatDateOnlyArgentina(updated.date), title: updated.title, description: updated.description, projectId: updated.projectId, mode: updated.mode, hours: updated.hours } } });
+    const employeeEdit = user.role !== Role.ADMIN;
+    const snapshot = (row: typeof current) => ({ employeeId: row.employeeId, date: formatDateOnlyArgentina(row.date), title: row.title, description: row.description, projectId: row.projectId, secondaryWorkItemId: row.secondaryWorkItemId, mode: row.mode, activityType: row.activityType, hours: row.hours, entryTime: row.entryTime, exitTime: row.exitTime });
+    await this.audit.record(user, { action: employeeEdit ? 'WORKLOG_UPDATED_BY_EMPLOYEE' : 'UPDATE', module: 'WORK_LOGS', entityType: 'WorkLog', entityId: id, title: updated.title, detail: employeeEdit ? 'Parte diario corregido por empleado' : dto.reason?.trim() || 'Parte diario editado', metadata: { reason: employeeEdit ? null : dto.reason?.trim() || null, before: snapshot(current), after: snapshot(updated) } });
     return workLogToDto(updated);
   }
   private attendanceToDto(row: any) {
