@@ -207,7 +207,7 @@ export class DashboardService {
       this.prisma.licenseRequest.count({ where: { employeeId, deletedAt: null } }),
       this.prisma.workLog.count({ where: { employeeId, deletedAt: null } }),
       this.prisma.project.findMany({
-        where: { deletedAt: null, assignedEmployees: { some: { id: employeeId } } },
+        where: { deletedAt: null, status: { not: ProjectStatus.ARCHIVED }, assignedEmployees: { some: { id: employeeId } } },
         select: { id: true, name: true, status: true, year: true, difficulty: true, deadline: true, updatedAt: true },
         orderBy: [{ deadline: 'asc' }, { updatedAt: 'desc' }],
       }),
