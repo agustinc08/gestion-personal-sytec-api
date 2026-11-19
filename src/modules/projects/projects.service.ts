@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { DeployEnvironment, DeployStatus, Role } from '@prisma/client';
+import { DeployEnvironment, DeployStatus, ProjectStatus, Role } from '@prisma/client';
 import { deploymentToDto, fromProjectStatus, projectToDto, toDate, toProjectDifficulty, toProjectStatus } from '../../shared/mappers';
 import { JwtUser } from '../auth/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
@@ -101,7 +101,7 @@ export class ProjectsService {
 
   async findOptions(user: JwtUser) {
     const rows = await this.prisma.project.findMany({
-      where: { deletedAt: null, ...this.accessWhere(user) },
+      where: { deletedAt: null, status: { not: ProjectStatus.ARCHIVED }, ...this.accessWhere(user) },
       select: {
         id: true, name: true, status: true, year: true, deadline: true, ownerId: true,
         assignedEmployees: { select: { id: true } },

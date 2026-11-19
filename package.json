@@ -5,7 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "build": "nest build",
-    "test": "node --import tsx --test src/shared/*.test.ts src/modules/employees/employees.service.test.ts src/modules/projects/projects.service.test.ts src/modules/licenses/licenses.service.test.ts src/modules/secondary-work-items/secondary-work-items.service.test.ts src/modules/work-logs/work-logs.authorization.test.ts src/modules/strike/strike.service.test.ts src/modules/auth/guards/jwt-auth.guard.test.ts src/modules/licenses/certificate-validation.test.ts",
+    "test": "node --import tsx --test src/shared/*.test.ts src/modules/employees/employees.service.test.ts src/modules/projects/projects.service.test.ts src/modules/dashboard/dashboard.service.test.ts src/modules/licenses/licenses.service.test.ts src/modules/secondary-work-items/secondary-work-items.service.test.ts src/modules/work-logs/work-logs.authorization.test.ts src/modules/strike/strike.service.test.ts src/modules/auth/guards/jwt-auth.guard.test.ts src/modules/licenses/certificate-validation.test.ts",
     "dev": "nest start --watch",
     "start:dev": "nest start --watch",
     "start": "node dist/main.js",
