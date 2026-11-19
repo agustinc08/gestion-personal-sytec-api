@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+
 export const MAX_PAGE_SIZE = 100;
 export const FALLBACK_PAGE_SIZE = 25;
 
@@ -24,7 +26,15 @@ export function getPageOptions(query: Record<string, unknown> = {}, defaultPageS
 
 export async function getConfiguredPageSize(prisma: { systemSetting?: { findUnique?: (args: any) => Promise<{ value?: unknown } | null> } }) {
   if (!prisma.systemSetting?.findUnique) return FALLBACK_PAGE_SIZE;
-  const setting = await prisma.systemSetting.findUnique({ where: { key: 'defaultPageSize' }, select: { value: true } });
+  let setting: { value?: unknown } | null;
+  try {
+    setting = await prisma.systemSetting.findUnique({ where: { key: 'defaultPageSize' }, select: { value: true } });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && ['P2021', 'P2022'].includes(error.code)) {
+      return FALLBACK_PAGE_SIZE;
+    }
+    throw error;
+  }
   const value = Number(setting?.value);
   return [10, 25, 50].includes(value) ? value : FALLBACK_PAGE_SIZE;
 }
